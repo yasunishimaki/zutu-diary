@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>頭痛ダイアリー 受付リーダー</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;500;600;700&family=Noto+Sans+JP:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+<style>
+  .rec-shell{max-width:760px;margin:0 auto;padding:0 20px 60px}
+  .scan-stage{position:relative;border:1px solid var(--rule-2);border-radius:2px;
+    background:#000;overflow:hidden;margin-top:16px}
+  .scan-stage video{display:block;width:100%;max-height:60vh;object-fit:cover}
+  .scan-frame{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    pointer-events:none}
+  .scan-frame .box{width:min(58%,320px);aspect-ratio:1;border:2px solid rgba(244,239,230,.9);
+    border-radius:4px;box-shadow:0 0 0 9999px rgba(0,0,0,.35)}
+  .scan-status{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--ink-3);
+    margin-top:10px;min-height:18px}
+  .result-card{border:1px solid var(--rule-2);border-radius:2px;background:rgba(255,255,255,.55);
+    box-shadow:var(--shadow);padding:26px 28px;margin-top:16px;
+    font-family:var(--sans);font-size:14px;line-height:2;white-space:pre-wrap;word-break:break-word}
+  .result-card .head{font-family:var(--serif);font-size:18px;font-weight:600;
+    padding-bottom:10px;margin-bottom:12px;border-bottom:2px solid var(--ink);white-space:normal}
+  .paste-box{margin-top:26px;padding-top:18px;border-top:1px solid var(--rule)}
+  .paste-box textarea{width:100%;margin-top:8px;padding:10px 12px;border:1px solid var(--rule-2);
+    border-radius:2px;background:var(--paper);font:13px var(--sans);color:var(--ink)}
+  @media print{
+    .rec-shell{max-width:100%;padding:0}
+    .result-card{border:0;box-shadow:none;padding:0}
+  }
+</style>
+</head>
+<body>
+
+<div class="rec-shell">
+  <header class="masthead">
+    <div>
+      <div class="eyebrow">Reception / 受付用</div>
+      <h2>頭痛ダイアリー <em>QR読み取り</em></h2>
+    </div>
+    <div class="meta">HEADACHE DIARY<br>RECEPTION READER</div>
+  </header>
+
+  <!-- 待機 -->
+  <section id="scan-idle" class="section">
+    <p class="lead">患者さんのスマホ画面に表示された「頭痛ダイアリー」のQRコードを読み取ります。</p>
+    <button id="btn-scan" class="cta">📷 カメラで読み取る</button>
+    <p class="scan-status" id="idle-status"></p>
+
+    <div class="paste-box">
+      <label class="hint" for="paste-input">カメラが使えないとき ─ 他のQRリーダーで読み取ったテキストをここに貼り付けても表示できます。</label>
+      <textarea id="paste-input" rows="4" placeholder="【頭痛ダイアリー】…"></textarea>
+      <div class="q-ctrl" style="justify-content:flex-start;margin-top:10px">
+        <button id="btn-paste" class="open-btn">表示する</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 読み取り中 -->
+  <section id="scan-live" class="section hidden">
+    <div class="scan-stage">
+      <video id="video" playsinline muted></video>
+      <div class="scan-frame"><div class="box"></div></div>
+    </div>
+    <p class="scan-status" id="live-status">QRコードを枠に合わせてください…</p>
+    <div class="q-ctrl" style="justify-content:flex-start">
+      <button id="btn-stop" class="ghost-btn">✖ 中止</button>
+    </div>
+  </section>
+
+  <!-- 結果 -->
+  <section id="scan-result" class="section hidden">
+    <div class="sec-head no-print">
+      <span class="pre">Result</span>
+      <h3>読み取り結果</h3>
+      <div class="aux">
+        <button id="btn-print" class="open-btn solid">🖨 印刷してカルテに添付</button>
+        <button id="btn-again" class="open-btn">📷 もう一度読み取る</button>
+      </div>
+    </div>
+    <div class="result-card" id="result-card"></div>
+    <p class="hint no-print">読み取り日時: <span id="result-time"></span></p>
+  </section>
+
+  <p class="caution no-print" style="margin-top:32px">
+    読み取った内容はこの画面に表示するだけで、<strong>どこにも保存・送信されません</strong>。ページを閉じると消えます。
+  </p>
+
+  <div class="footer no-print">
+    <span>HEADACHE DIARY ─ RECEPTION READER</span>
+    <span>DISPLAY ONLY / NO STORAGE</span>
+  </div>
+</div>
+
+<canvas id="frame-canvas" class="hidden"></canvas>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let stream = null;
+let scanning = false;
+
+function show(section) {
+  ["scan-idle", "scan-live", "scan-result"].forEach((id) =>
+    $(id).classList.toggle("hidden", id !== section));
+}
+
+async function startScan() {
+  if (typeof jsQR === "undefined") {
+    $("idle-status").textContent = "読み取り部品を読み込めませんでした。接続を確認してページを開き直してください。";
+    return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment", width: { ideal: 1280 } },
+      audio: false,
+    });
+  } catch (e) {
+    $("idle-status").textContent = "カメラを使用できません（許可が必要です）。下の貼り付け欄も使えます。";
+    return;
+  }
+  const video = $("video");
+  video.srcObject = stream;
+  await video.play();
+  show("scan-live");
+  scanning = true;
+  requestAnimationFrame(scanFrame);
+}
+
+function scanFrame() {
+  if (!scanning) return;
+  const video = $("video");
+  if (video.readyState >= 2) {
+    const canvas = $("frame-canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(video, 0, 0);
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
+    if (code && code.data && code.data.trim()) {
+      stopScan();
+      showResult(code.data);
+      return;
+    }
+  }
+  requestAnimationFrame(scanFrame);
+}
+
+function stopScan() {
+  scanning = false;
+  if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function showResult(text) {
+  const lines = text.split("\n");
+  const head = lines[0] || "";
+  const body = lines.slice(1).join("\n");
+  $("result-card").innerHTML =
+    `<div class="head">${escapeHtml(head)}</div>${escapeHtml(body)}`;
+  $("result-time").textContent = new Date().toLocaleString("ja-JP");
+  show("scan-result");
+}
+
+$("btn-scan").addEventListener("click", startScan);
+$("btn-stop").addEventListener("click", () => { stopScan(); show("scan-idle"); });
+$("btn-again").addEventListener("click", startScan);
+$("btn-print").addEventListener("click", () => window.print());
+$("btn-paste").addEventListener("click", () => {
+  const t = $("paste-input").value.trim();
+  if (t) showResult(t);
+});
+window.addEventListener("pagehide", stopScan);
+</script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+# ローカル開発用(コミットしない)
+.claude/
+.wrangler/
+dist-patient/
+dist-reception/

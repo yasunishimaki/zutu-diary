@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>頭痛ダイアリー ─ 音声問診つき</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;500;600;700&family=Noto+Sans+JP:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- ============== サイドバー ============== -->
+  <aside class="sidebar no-print">
+    <div class="brand">
+      <div class="mark"><span class="dot"></span><span>Headache Diary</span></div>
+      <h1>頭痛ダイアリー</h1>
+      <div class="sub">記録して、受診のときに先生に見せる。</div>
+    </div>
+
+    <div>
+      <div class="nav-title">Views</div>
+      <div class="cats">
+        <button class="cat-row active" data-view="record">
+          <span class="num">01</span><span class="name">記録する</span><span class="count" id="nav-count"></span>
+        </button>
+        <button class="cat-row" data-view="calendar">
+          <span class="num">02</span><span class="name">カレンダー</span>
+        </button>
+        <button class="cat-row" data-view="summary">
+          <span class="num">03</span><span class="name">受診サマリー</span>
+        </button>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ============== メイン ============== -->
+  <main class="main">
+
+    <!-- ===== 01 記録する ===== -->
+    <div id="view-record" class="view">
+      <header class="masthead">
+        <div>
+          <div class="eyebrow">01 / Record</div>
+          <h2>きょうの<em>頭痛</em>を記録する</h2>
+        </div>
+        <div class="meta"><b id="meta-count">0</b> entries<br><span id="meta-today"></span></div>
+      </header>
+
+      <section class="section">
+        <div class="sec-head">
+          <span class="pre">Interview</span>
+          <h3>問診</h3>
+          <div class="aux">
+            <button id="btn-sound" class="sound-toggle" title="読み上げのON/OFF">🔊 音声ON</button>
+            <div class="seg">
+              <button id="mode-voice" class="on">🎤 音声問診</button>
+              <button id="mode-form">✍️ フォーム</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- --- 音声問診 --- -->
+        <div id="pane-voice">
+          <div id="interview-idle">
+            <p class="lead">アプリが順番に質問します。声で答えると、自動で記録が埋まります。
+            マイクが使えないときも、ボタンや文字入力でそのまま進めます。</p>
+            <button id="btn-start-interview" class="cta">🎤 問診をはじめる</button>
+            <p class="hint">Chrome推奨。マイクの許可を求められたら「許可」を押してください。</p>
+          </div>
+
+          <div id="interview-live" class="hidden">
+            <div class="q-card">
+              <div class="q-progress" id="q-progress">Q 1 / 12</div>
+              <p class="q-text" id="q-text"></p>
+              <div class="q-mic" id="q-mic">
+                <span class="mic-dot"></span><span id="mic-status">…</span>
+              </div>
+              <div class="q-quick" id="q-quick"></div>
+              <div class="q-typed">
+                <input id="q-input" type="text" placeholder="文字で答える場合はここに入力">
+                <button id="q-input-send" class="open-btn">答える</button>
+              </div>
+              <div class="q-ctrl">
+                <button id="q-repeat" class="ghost-btn">🔁 もう一度聞く</button>
+                <button id="q-skip" class="ghost-btn">⏭ この質問をとばす</button>
+                <button id="q-abort" class="ghost-btn">✖ 問診を中止</button>
+              </div>
+            </div>
+            <div class="answered" id="answered-chips"></div>
+          </div>
+
+          <div id="interview-confirm" class="hidden">
+            <div class="sec-head" style="border-bottom:0;margin-bottom:0;padding-bottom:0">
+              <span class="pre">Saved</span>
+              <h3>✅ 記録しました</h3>
+            </div>
+            <dl class="confirm-list" id="confirm-list"></dl>
+            <div class="q-ctrl" style="justify-content:flex-start">
+              <button id="btn-done-interview" class="open-btn solid">OK</button>
+              <button id="btn-redo-interview" class="ghost-btn">🔁 やり直す（この記録を消して再問診）</button>
+              <button id="btn-undo-interview" class="ghost-btn">🗑 取り消す</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- --- フォーム入力 --- -->
+        <div id="pane-form" class="hidden">
+          <form id="entry-form">
+            <div class="grid2">
+              <label>日付 <input type="date" id="f-date" required></label>
+              <label>時間帯
+                <select id="f-time">
+                  <option value="">─</option>
+                  <option>起床時</option><option>朝</option><option>昼</option>
+                  <option>夕方</option><option>夜</option><option>夜中</option>
+                </select>
+              </label>
+            </div>
+
+            <fieldset><legend>Severity ─ 痛みの強さ</legend>
+              <div class="chips" id="f-severity">
+                <button type="button" data-v="1">△ 軽い（仕事・家事はできる）</button>
+                <button type="button" data-v="2">○ 中くらい（つらいが動ける）</button>
+                <button type="button" data-v="3">◎ 強い（寝込む・動けない）</button>
+              </div>
+            </fieldset>
+
+            <fieldset><legend>Location ─ 痛む場所</legend>
+              <div class="chips" id="f-location">
+                <button type="button" data-v="右側">右側</button>
+                <button type="button" data-v="左側">左側</button>
+                <button type="button" data-v="両側">両側</button>
+                <button type="button" data-v="こめかみ">こめかみ</button>
+                <button type="button" data-v="目の奥">目の奥</button>
+                <button type="button" data-v="後頭部">後頭部</button>
+                <button type="button" data-v="頭全体">頭全体</button>
+              </div>
+            </fieldset>
+
+            <fieldset><legend>Symptoms ─ 症状（あてはまるもの全部）</legend>
+              <div class="chips" id="f-symptoms">
+                <button type="button" data-v="拍動性">ズキンズキン脈打つ</button>
+                <button type="button" data-v="前兆">前兆（ギザギザの光など）</button>
+                <button type="button" data-v="吐き気">吐き気・嘔吐</button>
+                <button type="button" data-v="光がつらい">光がつらい</button>
+                <button type="button" data-v="音がつらい">音がつらい</button>
+                <button type="button" data-v="動くと悪化">動くと悪化する</button>
+              </div>
+            </fieldset>
+
+            <fieldset><legend>Triggers ─ 思い当たるきっかけ</legend>
+              <div class="chips" id="f-triggers">
+                <button type="button" data-v="寝不足">寝不足</button>
+                <button type="button" data-v="寝すぎ">寝すぎ</button>
+                <button type="button" data-v="天気・低気圧">天気・低気圧</button>
+                <button type="button" data-v="生理">生理</button>
+                <button type="button" data-v="ストレス">ストレス</button>
+                <button type="button" data-v="肩こり">肩こり・首こり</button>
+                <button type="button" data-v="アルコール">アルコール</button>
+                <button type="button" data-v="人混み・光・匂い">人混み・光・匂い</button>
+              </div>
+            </fieldset>
+
+            <div class="grid2">
+              <label>飲んだ薬（名前） <input type="text" id="f-med" placeholder="例: ロキソニン、○○トリプタン"></label>
+              <label>薬の効きめ
+                <select id="f-medeffect">
+                  <option value="">─</option>
+                  <option>よく効いた</option><option>少し効いた</option><option>効かなかった</option>
+                </select>
+              </label>
+            </div>
+
+            <fieldset><legend>Impact ─ 生活への影響</legend>
+              <div class="chips" id="f-impact">
+                <button type="button" data-v="普段どおり">普段どおり過ごせた</button>
+                <button type="button" data-v="支障あり">支障があった</button>
+                <button type="button" data-v="寝込んだ">寝込んだ・休んだ</button>
+              </div>
+            </fieldset>
+
+            <label>メモ（先生に伝えたいこと） <textarea id="f-memo" rows="2"></textarea></label>
+
+            <button type="submit" class="cta">✅ 保存する</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="sec-head">
+          <span class="pre">Recent</span>
+          <h3>最近の記録</h3>
+        </div>
+        <div id="recent-list" class="entry-list"></div>
+      </section>
+
+      <div class="caution">
+        <p>⚠ このアプリは記録の道具です。診断はしません。<strong>いつもと違う突然の激しい頭痛、手足のしびれ、ろれつが回らない</strong>などがあるときは、すぐに医療機関を受診してください。</p>
+        <div class="caution-legend">
+          <div>MIC ─ 音声問診は Chrome 推奨</div>
+          <div>DATA ─ 記録はこの端末内にのみ保存</div>
+          <div>AI ─ 長いメモのみ要約のため送信（サーバーには保存されません）</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 02 カレンダー ===== -->
+    <div id="view-calendar" class="view hidden">
+      <header class="masthead">
+        <div>
+          <div class="eyebrow">02 / Calendar</div>
+          <h2 id="cal-title">─</h2>
+        </div>
+        <div class="meta">
+          <div class="seg">
+            <button id="cal-prev">← 前月</button>
+            <button id="cal-today">今月</button>
+            <button id="cal-next">翌月 →</button>
+          </div>
+        </div>
+      </header>
+
+      <section class="section">
+        <div class="cal-legend">
+          <span><i class="sq sev1"></i>軽い</span>
+          <span><i class="sq sev2"></i>中くらい</span>
+          <span><i class="sq sev3"></i>強い</span>
+          <span>💊 = 薬を飲んだ日</span>
+        </div>
+        <div id="cal-grid" class="cal-grid"></div>
+        <div id="cal-stats" class="cal-stats"></div>
+        <div id="cal-day-detail"></div>
+      </section>
+    </div>
+
+    <!-- ===== 03 受診サマリー ===== -->
+    <div id="view-summary" class="view hidden">
+      <header class="masthead">
+        <div>
+          <div class="eyebrow">03 / Summary</div>
+          <h2>受診用<em>サマリー</em></h2>
+        </div>
+        <div class="meta">
+          <div class="seg">
+            <button class="range-btn on" data-months="1">1ヶ月</button>
+            <button class="range-btn" data-months="3">3ヶ月</button>
+            <button class="range-btn" data-months="6">6ヶ月</button>
+          </div>
+        </div>
+      </header>
+
+      <section class="section no-print">
+        <div class="q-ctrl" style="justify-content:flex-start">
+          <button id="btn-print" class="open-btn solid">🖨 印刷して持っていく</button>
+          <button id="btn-qr" class="open-btn">📱 QRコードで見せる</button>
+        </div>
+        <div id="qr-panel" class="qr-panel hidden">
+          <div class="qr-img" id="qr-img"></div>
+          <div class="qr-note">
+            <b>受付で読み取り</b>
+            期間のまとめと直近の記録がテキストで入っています。
+            カメラをかざすだけで、そのまま読めます。
+            <span id="qr-info" class="hint"></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div id="summary-body"></div>
+      </section>
+
+      <section class="section no-print">
+        <div class="sec-head">
+          <span class="pre">Data</span>
+          <h3>データ管理</h3>
+        </div>
+        <div class="q-ctrl" style="justify-content:flex-start">
+          <button id="btn-export" class="open-btn">⬇ JSONで書き出す</button>
+          <label class="open-btn" for="import-file" style="cursor:pointer">⬆ 読み込む</label>
+          <input type="file" id="import-file" accept=".json" class="hidden">
+          <button id="btn-sample" class="ghost-btn">🧪 サンプルデータを入れる</button>
+          <button id="btn-wipe" class="ghost-btn">🗑 全データを消す</button>
+        </div>
+        <p class="hint">データはこの端末のブラウザ（localStorage）にだけ保存されます。機種変更の前に書き出してください。</p>
+      </section>
+
+      <div class="footer no-print">
+        <span>HEADACHE DIARY ─ PROTOTYPE</span>
+        <span>RECORDS ONLY / NO DIAGNOSIS</span>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>
