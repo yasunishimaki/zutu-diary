@@ -96,12 +96,24 @@ function startListening() {
   rec.continuous = true;
   rec.interimResults = false;
   rec.onresult = (e) => {
-    const t = e.results[e.results.length - 1][0].transcript;
     if (Date.now() < ttsGuardUntil) return; // 自分の読み上げ声
     if (!interview) return;
     const q = currentQuestion();
-    if (q && q.collect) collectSegment(t); // メモは話し終わるまで聞き溜める
-    else submitAnswer(t);
+    if (q && q.collect) {
+      // メモの聞き溜め。
+      // Android Chrome は認識途中の「育っていくテキスト」を何度も届けてくるため、
+      // 足し算はせず、確定済み(isFinal)の結果だけを毎回ゼロから組み立て直す。
+      let finals = "";
+      for (let i = 0; i < e.results.length; i++) {
+        if (e.results[i].isFinal) finals += e.results[i][0].transcript;
+      }
+      if (finals.trim()) collectUpdate(finals.trim());
+    } else {
+      // 単発の回答も、確定した結果だけを使う(途中経過で誤回答しない)
+      const last = e.results[e.results.length - 1];
+      if (!last.isFinal) return;
+      submitAnswer(last[0].transcript);
+    }
   };
   rec.onerror = (e) => {
     if (e.error === "not-allowed" || e.error === "service-not-allowed") {
@@ -112,6 +124,9 @@ function startListening() {
   rec.onend = () => {
     if (liveRec !== rec) return;
     liveRec = null;
+    // 認識セッションが切れたら、聞き溜め分を確定に格上げしてから開き直す
+    const q = interview && currentQuestion();
+    if (q && q.collect) collectCommitted = $("q-input").value.trim();
     // 無音で自動停止したら、問診が続いている間は開き直す
     if (interview && !liveRecBlocked) startListening();
   };
@@ -431,6 +446,7 @@ function askCurrent(fresh) {
   $("q-progress").textContent = `Q ${visibleIdx + 1} / ${visibleCount}`;
   $("q-text").textContent = q.ask;
   $("q-input").value = "";
+  collectCommitted = "";
 
   const quick = $("q-quick");
   quick.innerHTML = "";
@@ -521,21 +537,23 @@ function renderAnsweredChips() {
   }
 }
 
-/* メモの聞き溜め: 発話のかたまりを入力欄に足していき、
-   「以上です」等の締め言葉が来たときだけ確定する */
+/* メモの聞き溜め: 「以上です」等の締め言葉が来たときだけ確定する。
+   collectCommitted = 前の認識セッションまでに確定した分。
+   現在セッションの確定結果(finals)はイベントごとに丸ごと届くので、
+   常に committed + finals で入力欄を作り直す(足し算しない)。 */
 const COLLECT_END_RE = /(以上です|以上でお願いします|以上|終わりです|おわりです|これで終わり|おしまい)[。．！!？?]?\s*$/;
+let collectCommitted = "";
 
-function collectSegment(t) {
-  let text = t.trim();
+function collectUpdate(sessionFinals) {
+  let text = collectCommitted ? `${collectCommitted} ${sessionFinals}` : sessionFinals;
   let done = false;
   if (COLLECT_END_RE.test(text)) {
     text = text.replace(COLLECT_END_RE, "").trim();
     done = true;
   }
-  const input = $("q-input");
-  if (text) input.value = input.value ? `${input.value} ${text}` : text;
+  $("q-input").value = text;
   if (done) {
-    submitAnswer(input.value.trim() || "特にない");
+    submitAnswer(text || "特にない");
   } else {
     setMicStatus("聞いています… 話し終わったら「以上です」と言ってください", true);
   }
