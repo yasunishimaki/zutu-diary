@@ -12,7 +12,7 @@ const STORAGE_KEY = "zutsu-diary-v1";
 
 let state = {
   records: [],                       // 記録の配列
-  settings: { soundOn: true, speechRate: 1.0, aiSummaryOn: false },
+  settings: { soundOn: true, speechRate: 1.0, aiSummaryOn: false, aiConversationOn: false },
 };
 
 function isHeadacheRecord(r) { return r.entryType !== "noHeadache"; }
@@ -66,6 +66,11 @@ function load() {
       const data = JSON.parse(raw);
       state.records = Array.isArray(data.records) ? data.records.map(normalizeRecord) : [];
       Object.assign(state.settings, data.settings || {});
+      // 旧版の「メモ要約のみ」の同意を、全回答を扱うAI会話の同意へ自動拡張しない。
+      if (!Object.prototype.hasOwnProperty.call(data.settings || {}, "aiConversationOn")) {
+        state.settings.aiConversationOn = false;
+        state.settings.aiSummaryOn = false;
+      }
     }
   } catch (_) { /* 壊れていたら初期状態で開始 */ }
 }
@@ -422,6 +427,18 @@ function normalizeSpeechText(value) {
     .trim();
 }
 
+function parseHeadachePresence(value) {
+  const text = normalizeSpeechText(value).replace(/[。！？!?]+$/g, "");
+  const positive = /(?:あった|有った)(?:よ|です|ね)?|ありました|あります|ある(?:よ|ね|です)?|頭(?:が|は)?痛(?:い|かった|む)|頭痛(?:が|は)?(?:した|しました|出た|出ました|あった|ありました)|痛かった(?:です)?/.test(text);
+  const negative = /(?:頭痛|頭の痛み|痛み).{0,10}(?:ありません(?:でした)?|なかった|ない|なし|起きていない|出ていない)/.test(text)
+    || /^(?:(?:今日は|きょうは|今日も|きょうも)?(?:特に|全然|まったく|何も)?)(?:ありません(?:でした)?|なかった(?:です|よ|ね)?|ない(?:です|よ|ね|と思う|かな)?|なし(?:です)?|大丈夫(?:です)?|平気(?:です)?)$/.test(text);
+
+  // 「今はないけど、朝はあった」のような発言は、その日に頭痛があった記録にする。
+  if (positive) return true;
+  if (negative) return false;
+  return null;
+}
+
 // 患者さんの意味は変えず、明らかな言いよどみだけを自由メモから除く。
 function cleanSpokenMemo(value) {
   let text = normalizeSpeechText(value);
@@ -445,11 +462,12 @@ const QUESTIONS = [
     ask: "きょうは頭痛がありましたか？",
     quick: ["あった", "なかった"],
     handle(t, draft) {
-      if (/なかった|ありません|ないです|頭痛なし/.test(t)) {
+      const presence = parseHeadachePresence(t);
+      if (presence === false) {
         draft.entryType = "noHeadache";
         return "頭痛なし";
       }
-      if (/あっ?た|有った|ありました|あります|ある|痛/.test(t)) {
+      if (presence === true) {
         draft.entryType = "headache";
         return "頭痛あり";
       }
@@ -687,8 +705,66 @@ function blankDraft() {
   };
 }
 
+const AI_ALLOWED_SYMPTOMS = new Set([
+  "ズキズキする痛み", "締めつける痛み", "重い痛み", "動くと悪化", "動けなかった",
+  "痛む前の見え方の変化", "吐き気あり", "実際に吐いた", "光がつらい", "音がつらい",
+]);
+const AI_ANSWER_KEYS = new Set(["hasHeadache", ...QUESTIONS.map((q) => q.key)]);
+
+function shortAiText(value, max = 120) {
+  return typeof value === "string" ? normalizeSpeechText(value).slice(0, max) : "";
+}
+
+function applyAiInterpretation(result, draft) {
+  const fields = result && typeof result.fields === "object" && result.fields ? result.fields : {};
+  const answeredFields = Array.isArray(result?.answeredFields)
+    ? result.answeredFields.filter((key) => AI_ANSWER_KEYS.has(key)) : [];
+
+  if (["headache", "noHeadache"].includes(fields.entryType)) draft.entryType = fields.entryType;
+  if ([-2, -1, 0].includes(fields.dateOffset)) draft.date = todayStr(fields.dateOffset);
+  if (shortAiText(fields.time, 40)) draft.time = shortAiText(fields.time, 40);
+  if (shortAiText(fields.duration, 60)) draft.duration = shortAiText(fields.duration, 60);
+  if (Number.isFinite(fields.durationMinutes) && fields.durationMinutes >= 0) draft.durationMinutes = Math.round(fields.durationMinutes);
+  if (typeof fields.ongoing === "boolean") draft.ongoing = fields.ongoing;
+  if ([1, 2, 3].includes(fields.severity)) draft.severity = fields.severity;
+  if (Array.isArray(fields.location)) {
+    const locations = fields.location.map((x) => shortAiText(x, 30)).filter(Boolean).slice(0, 5);
+    if (locations.length) draft.location = [...new Set(locations)].join("、");
+  }
+  if (Array.isArray(fields.symptoms)) {
+    for (const symptom of fields.symptoms) if (AI_ALLOWED_SYMPTOMS.has(symptom)) addSymptom(draft, symptom);
+  }
+  if (Array.isArray(fields.triggers)) {
+    draft.triggers = [...new Set(fields.triggers.map((x) => shortAiText(x, 30)).filter(Boolean))].slice(0, 8);
+  }
+  if (shortAiText(fields.auraDetail, 120)) draft.auraDetail = shortAiText(fields.auraDetail, 120);
+  if (fields.medTaken === false) draft.med = "";
+  if (shortAiText(fields.med, 80)) draft.med = shortAiText(fields.med, 80);
+  if (shortAiText(fields.medTiming, 80)) draft.medTiming = shortAiText(fields.medTiming, 80);
+  if (Number.isFinite(fields.medCount) && fields.medCount >= 0) draft.medCount = Math.round(fields.medCount);
+  if (["よく効いた", "少し効いた", "効かなかった", "まだ不明"].includes(fields.medEffect)) draft.medEffect = fields.medEffect;
+  if (["普段どおり", "支障あり", "寝込んだ"].includes(fields.impact)) draft.impact = fields.impact;
+  if (shortAiText(fields.memo, 500)) draft.memo = cleanSpokenMemo(fields.memo).slice(0, 500);
+  for (const key of answeredFields) markAnswered(draft, key);
+  return answeredFields;
+}
+
+async function requestAiInterpretation(q, text) {
+  const res = await fetch("/api/interview", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ questionKey: q.key, question: q.ask, text }),
+  });
+  if (!res.ok) {
+    const error = new Error("ai_interview_failed");
+    error.status = res.status;
+    throw error;
+  }
+  return res.json();
+}
+
 function startInterview() {
-  interview = { idx: 0, draft: blankDraft(), answers: [], retries: 0 };
+  interview = { idx: 0, draft: blankDraft(), answers: [], retries: 0, processing: false, aiUnavailable: false, leadIn: "" };
   liveRecBlocked = false;
   $("interview-idle").classList.add("hidden");
   $("interview-confirm").classList.add("hidden");
@@ -715,7 +791,9 @@ function askCurrent(fresh) {
   const visibleCount = QUESTIONS.filter(x => !(x.skipIf && x.skipIf(interview.draft))).length;
   const visibleIdx = QUESTIONS.slice(0, interview.idx).filter(x => !(x.skipIf && x.skipIf(interview.draft))).length;
   $("q-progress").textContent = `質問 ${visibleIdx + 1} / ${visibleCount}`;
-  $("q-text").textContent = q.ask;
+  const spokenQuestion = interview.leadIn ? `${interview.leadIn} ${q.ask}` : q.ask;
+  interview.leadIn = "";
+  $("q-text").textContent = spokenQuestion;
   $("q-input").value = "";
   collectCommitted = "";
 
@@ -765,7 +843,7 @@ function askCurrent(fresh) {
 
   startListening(); // すでに開いていれば何もしない(開きっぱなし)
   if (liveRec) setMicStatus(q.collect ? "聞いています… 話し終わったら「以上です」と言ってください" : "聞いています…", true);
-  speak(q.ask);
+  speak(spokenQuestion);
 }
 
 function setMicStatus(msg, listening) {
@@ -774,35 +852,66 @@ function setMicStatus(msg, listening) {
   $("mic-status").textContent = msg || (SR ? "マイク待機中" : "音声認識なし(ボタンで回答)");
 }
 
-function submitAnswer(text) {
+async function submitAnswer(text) {
   if (!interview) return;
   const q = currentQuestion();
   if (!q || !text || !text.trim()) return;
+  if (interview.processing) return;
 
   const clean = normalizeSpeechText(text);
   const flags = redFlagsIn(clean);
   if (flags.length) showSafetyAlert(flags, interview.draft);
-  const display = q.handle(clean, interview.draft);
+  const activeInterview = interview;
+  activeInterview.processing = true;
+  let display = null;
+  let acknowledgement = "";
+
+  if (state.settings.aiConversationOn && !activeInterview.aiUnavailable) {
+    setMicStatus("お話の内容を整理しています…", false);
+    try {
+      const aiResult = await requestAiInterpretation(q, clean);
+      if (interview !== activeInterview) return;
+      const aiAnswered = applyAiInterpretation(aiResult, activeInterview.draft);
+      const relevant = q.key === "overview"
+        || (q.key === "hasHeadache" && aiAnswered.includes(q.key) && ["headache", "noHeadache"].includes(activeInterview.draft.entryType))
+        || aiAnswered.includes(q.key);
+      if (aiResult?.understood === true && relevant) {
+        display = shortAiText(aiResult.answerSummary, 60) || "話した内容を記録";
+        acknowledgement = shortAiText(aiResult.acknowledgement, 35);
+        if (q.key === "overview") activeInterview.draft.narrativeRaw = clean.slice(0, 1000);
+        if (q.key === "memo") display = q.handle(clean, activeInterview.draft);
+      }
+    } catch (_) {
+      if (interview !== activeInterview) return;
+      activeInterview.aiUnavailable = true;
+      toast("AIに接続できないため、端末内で記録を続けます");
+    }
+  }
+
+  if (interview !== activeInterview) return;
+  activeInterview.processing = false;
+  if (display === null) display = q.handle(clean, activeInterview.draft);
   if (display === null) {
-    interview.retries++;
-    if (interview.retries <= 1) {
-      setMicStatus(`「${text}」を解釈できませんでした。`, !!liveRec);
-      speak("すみません、もう一度お願いします。");
+    activeInterview.retries++;
+    if (activeInterview.retries <= 1) {
+      setMicStatus("うまく聞き取れませんでした。普段の言葉でもう一度話してください。", !!liveRec);
+      speak("すみません。普段の言葉で、もう一度教えてください。");
     } else {
-      setMicStatus(`「${text}」を解釈できませんでした。ボタンか文字入力で答えてください。`, !!liveRec);
+      setMicStatus("うまく聞き取れませんでした。ボタンや文字入力でも答えられます。", !!liveRec);
     }
     return;
   }
 
-  markAnswered(interview.draft, q.key);
-  interview.answers.push({ label: q.label, display });
+  markAnswered(activeInterview.draft, q.key);
+  activeInterview.answers.push({ label: q.label, display });
+  activeInterview.leadIn = acknowledgement;
   renderAnsweredChips();
-  if (q.key === "hasHeadache" && interview.draft.entryType === "noHeadache") {
-    interview.idx = QUESTIONS.length;
+  if (q.key === "hasHeadache" && activeInterview.draft.entryType === "noHeadache") {
+    activeInterview.idx = QUESTIONS.length;
     askCurrent(true);
     return;
   }
-  interview.idx++;
+  activeInterview.idx++;
   askCurrent(true);
 }
 
@@ -944,7 +1053,7 @@ function closeConfirm() {
 const SUMMARIZE_MIN_CHARS = 40;
 
 async function summarizeMemoIfLong(record) {
-  if (!state.settings.aiSummaryOn || !record.memo || record.memo.length < SUMMARIZE_MIN_CHARS) return;
+  if (!state.settings.aiConversationOn || !record.memo || record.memo.length < SUMMARIZE_MIN_CHARS) return;
   try {
     const res = await fetch("/api/summarize", {
       method: "POST",
@@ -1550,11 +1659,12 @@ function init() {
   renderSound();
 
   const aiToggle = $("ai-summary-on");
-  aiToggle.checked = !!state.settings.aiSummaryOn;
+  aiToggle.checked = !!state.settings.aiConversationOn;
   aiToggle.addEventListener("change", () => {
-    state.settings.aiSummaryOn = aiToggle.checked;
+    state.settings.aiConversationOn = aiToggle.checked;
+    state.settings.aiSummaryOn = aiToggle.checked; // 旧版データとの互換用
     save();
-    toast(aiToggle.checked ? "AIによる短いまとめを有効にしました" : "メモは端末内だけに保存します");
+    toast(aiToggle.checked ? "AIによる自然な会話とメモ整理を有効にしました" : "回答はAIへ送らず、端末内で記録します");
   });
 
   // 記録モード切替

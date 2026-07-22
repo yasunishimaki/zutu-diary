@@ -32,6 +32,13 @@ assert.equal(evaluate(`parseNarrativeSeverity("夜8時から2時間続いた")`)
 assert.equal(evaluate(`parseNarrativeSeverity("痛みの強さは10段階で8")`), 3);
 assert.equal(evaluate(`normalizeSpeechText("あっ た")`), "あった");
 assert.equal(evaluate(`normalizeSpeechText("な かっ た")`), "なかった");
+for (const answer of ["ありません", "ないよ", "きょうは大丈夫です", "頭痛はなかったです", "全然ありませんでした"]) {
+  assert.equal(evaluate(`parseHeadachePresence(${JSON.stringify(answer)})`), false, answer);
+}
+for (const answer of ["ありました", "あったよ", "頭が痛かったです", "頭痛が出ました", "今はないけど朝はあった"]) {
+  assert.equal(evaluate(`parseHeadachePresence(${JSON.stringify(answer)})`), true, answer);
+}
+assert.equal(evaluate(`parseHeadachePresence("よくわからない")`), null);
 assert.equal(
   evaluate(`cleanSpokenMemo("うーん、えっと、昨日は あのー 薬を飲んでも効きませんでした")`),
   "昨日は薬を飲んでも効きませんでした。",
@@ -53,6 +60,25 @@ assert.equal(spokenAnswers.headacheType, "headache");
 assert.equal(spokenAnswers.memoResult, "メモに記録");
 assert.equal(spokenAnswers.memo, "先生に薬の相談をしたい。");
 assert.equal(spokenAnswers.memoSpokenRaw, "えっと、先生に薬の相談をしたい");
+
+const aiInterpretation = JSON.parse(evaluate(`(() => {
+  const d = blankDraft();
+  const answered = applyAiInterpretation({
+    answeredFields: ["time", "severity", "location", "quality", "nausea", "unknown"],
+    fields: {
+      dateOffset: -1, time: "夜8時ごろ", severity: 3,
+      location: ["右のこめかみ"], symptoms: ["ズキズキする痛み", "吐き気あり", "不正な症状"],
+      triggers: [], medTaken: null, impact: null,
+    },
+  }, d);
+  return JSON.stringify({ d, answered });
+})()`));
+assert.equal(aiInterpretation.d.date, evaluate(`todayStr(-1)`));
+assert.equal(aiInterpretation.d.time, "夜8時ごろ");
+assert.equal(aiInterpretation.d.severity, 3);
+assert.equal(aiInterpretation.d.location, "右のこめかみ");
+assert.deepEqual(aiInterpretation.d.symptoms, ["ズキズキする痛み", "吐き気あり"]);
+assert.ok(!aiInterpretation.answered.includes("unknown"));
 
 const narrative = evaluate(`(() => {
   const d = blankDraft();
