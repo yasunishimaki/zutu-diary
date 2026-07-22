@@ -101,9 +101,9 @@
         [...medFreq.entries()].map(([name, item]) => `<li>${escapeHtml(name)}：${item.days.size}日${item.known ? `、分かる範囲で合計${item.count}回分` : ""}</li>`).join("") + `</ul>`;
     }
 
-    html += `<h3 class="sum-head">記録一覧</h3><div style="overflow-x:auto"><table class="sum-table">
-      <tr><th>日付</th><th>始まった時間・続いた時間</th><th>強さ</th><th>場所</th><th>一緒に起きたこと</th><th>きっかけ</th><th>薬と効きめ</th><th>生活への影響</th><th>本人の言葉</th></tr>` +
-      recs.map((r) => !isHeadacheRecord(r) ? `<tr class="no-headache-row"><td class="c">${fmtDate(r.date)}</td><td colspan="8">頭痛なし</td></tr>` : `<tr>
+    html += `<h3 class="sum-head">記録一覧</h3><div style="overflow-x:auto"><table class="sum-table record-table">
+      <thead><tr><th>日付</th><th>始まった時間・続いた時間</th><th>強さ</th><th>場所</th><th>一緒に起きたこと</th><th>きっかけ</th><th>薬と効きめ</th><th>生活への影響</th></tr></thead>` +
+      recs.map((r) => !isHeadacheRecord(r) ? `<tbody class="record-block"><tr class="no-headache-row"><td class="c">${fmtDate(r.date)}</td><td colspan="7">頭痛なし</td></tr></tbody>` : `<tbody class="record-block"><tr>
         <td class="c">${fmtDate(r.date)}</td>
         <td>${escapeHtml([r.time || `開始時刻は${emptyAnswerText(r, "time", "未入力")}`, r.duration || `続いた時間は${emptyAnswerText(r, "duration", "未入力")}`].join(" / "))}</td>
         <td class="c">${["", "軽い", "中くらい", "強い"][r.severity] || "未確認"}</td>
@@ -112,8 +112,7 @@
         <td>${escapeHtml((r.triggers || []).join("、") || emptyAnswerText(r, "triggers", "特になし"))}</td>
         <td>${escapeHtml(r.med ? `${r.med}${r.medTiming ? `（${r.medTiming}）` : "（飲んだ時刻・回数は未確認）"}、${r.medEffect || "効きめは未確認"}` : emptyAnswerText(r, "med", "飲んでいない"))}</td>
         <td class="c">${escapeHtml(r.impact || emptyAnswerText(r, "impact", "未入力"))}</td>
-        <td>${r.memoSummary ? `<b>短いまとめ：</b>${escapeHtml(r.memoSummary)}<br>` : ""}${r.narrativeRaw ? `<b>最初に話した内容：</b>${escapeHtml(r.narrativeRaw)}<br>` : ""}${r.memo ? `<b>追加で伝えたこと：</b>${escapeHtml(r.memo)}` : ""}</td>
-      </tr>`).join("") + `</table></div><p class="hint">このまとめは本人の記録から自動集計したものです（診断ではありません）。</p>`;
+      </tr>${r.memoSummary || r.narrativeRaw || r.memo ? `<tr class="record-words-row"><td colspan="8"><b class="record-words-label">本人の言葉</b>${r.memoSummary ? `<b>短いまとめ：</b>${escapeHtml(r.memoSummary)}<br>` : ""}${r.narrativeRaw ? `<b>最初に話した内容：</b>${escapeHtml(r.narrativeRaw)}<br>` : ""}${r.memo ? `<b>追加で伝えたこと：</b>${escapeHtml(r.memo)}` : ""}</td></tr>` : ""}</tbody>`).join("") + `</table></div><p class="hint">このまとめは本人の記録から自動集計したものです（診断ではありません）。</p>`;
 
     return html;
   }

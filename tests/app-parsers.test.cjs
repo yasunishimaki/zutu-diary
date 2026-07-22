@@ -145,16 +145,18 @@ evaluate(`state.records = [
   normalizeRecord({ id: "h1", date: todayStr(-1), entryType: "headache", severity: 3,
     duration: "2時間くらい", durationMinutes: 120, symptoms: ["実際に吐いた", "動くと悪化"],
     triggers: [], med: "ロキソニン", medTiming: "30分で1錠", medCount: 1,
-    medEffect: "よく効いた", impact: "寝込んだ", answeredFields: ["duration", "med", "impact"], createdAt: 2 }),
+    medEffect: "よく効いた", impact: "寝込んだ", memo: "先生に相談したい長い内容です。".repeat(8),
+    answeredFields: ["duration", "med", "impact", "memo"], createdAt: 2 }),
   normalizeRecord({ id: "n1", date: todayStr(), entryType: "noHeadache", createdAt: 3 })
 ]; renderSummary();`);
 assert.match(elements["summary-body"].innerHTML, /頭痛があったのは1日/);
 assert.match(elements["summary-body"].innerHTML, /実際に吐いた 1回/);
 assert.match(elements["summary-body"].innerHTML, /頭痛なし/);
 const sharedSummaryHtml = elements["summary-body"].innerHTML;
-evaluate(`renderSummaryLegacy()`);
-const normalizeHtml = (html) => html.replace(/\s+/g, " ").replace(/> </g, "><").trim();
-assert.equal(normalizeHtml(elements["summary-body"].innerHTML), normalizeHtml(sharedSummaryHtml));
+assert.match(sharedSummaryHtml, /record-table/);
+assert.match(sharedSummaryHtml, /record-words-row/);
+assert.match(sharedSummaryHtml, /本人の言葉/);
+assert.doesNotMatch(sharedSummaryHtml, /<th>本人の言葉<\/th>/);
 
 (async () => {
 const qrParts = JSON.parse(await evaluate(`(async () => JSON.stringify(await buildQrTransfer([
