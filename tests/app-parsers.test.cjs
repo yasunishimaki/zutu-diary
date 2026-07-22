@@ -30,6 +30,29 @@ assert.equal(evaluate(`parseDuration("まだ痛みが続いている").ongoing`)
 assert.equal(evaluate(`parseDuration("2時間半").minutes`), 150);
 assert.equal(evaluate(`parseNarrativeSeverity("夜8時から2時間続いた")`), null);
 assert.equal(evaluate(`parseNarrativeSeverity("痛みの強さは10段階で8")`), 3);
+assert.equal(evaluate(`normalizeSpeechText("あっ た")`), "あった");
+assert.equal(evaluate(`normalizeSpeechText("な かっ た")`), "なかった");
+assert.equal(
+  evaluate(`cleanSpokenMemo("うーん、えっと、昨日は あのー 薬を飲んでも効きませんでした")`),
+  "昨日は薬を飲んでも効きませんでした。",
+);
+
+const spokenAnswers = JSON.parse(evaluate(`(() => {
+  const headache = blankDraft();
+  const memo = blankDraft();
+  return JSON.stringify({
+    headacheResult: QUESTIONS.find((q) => q.key === "hasHeadache").handle(normalizeSpeechText("あっ た"), headache),
+    headacheType: headache.entryType,
+    memoResult: QUESTIONS.find((q) => q.key === "memo").handle("えっと、先生に薬の相談をしたい", memo),
+    memo: memo.memo,
+    memoSpokenRaw: memo.memoSpokenRaw,
+  });
+})()`));
+assert.equal(spokenAnswers.headacheResult, "頭痛あり");
+assert.equal(spokenAnswers.headacheType, "headache");
+assert.equal(spokenAnswers.memoResult, "メモに記録");
+assert.equal(spokenAnswers.memo, "先生に薬の相談をしたい。");
+assert.equal(spokenAnswers.memoSpokenRaw, "えっと、先生に薬の相談をしたい");
 
 const narrative = evaluate(`(() => {
   const d = blankDraft();

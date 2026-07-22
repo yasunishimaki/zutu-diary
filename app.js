@@ -406,6 +406,37 @@ function extractNarrative(text, draft) {
   if (impact) { draft.impact = impact; markAnswered(draft, "impact"); }
 }
 
+// 音声認識が日本語の語中へ入れる空白（例:「あっ た」）を吸収する。
+// 単語間の空白が意味を持つ英数字はそのまま残す。
+function normalizeSpeechText(value) {
+  let text = String(value ?? "").normalize("NFKC").trim();
+  const japanese = "ぁ-んァ-ヶ一-龠々ー";
+  let previous;
+  do {
+    previous = text;
+    text = text.replace(new RegExp(`([${japanese}])\\s+(?=[${japanese}])`, "g"), "$1");
+  } while (text !== previous);
+  return text
+    .replace(/\s+([、。！？,.!?])/g, "$1")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
+
+// 患者さんの意味は変えず、明らかな言いよどみだけを自由メモから除く。
+function cleanSpokenMemo(value) {
+  let text = normalizeSpeechText(value);
+  text = text.replace(/(?:う(?:ー|〜|～)+ん|えっと|え(?:ー|〜|～)+と|あの(?:ー|〜|～)+|その(?:ー|〜|～)+|え(?:ー|〜|～)+|あ(?:ー|〜|～)+|ん(?:ー|〜|～)+)/g, "");
+  text = text
+    .replace(/^[、。,.\s]+/, "")
+    .replace(/[、,](?=[、。！？,.!?])/g, "")
+    .replace(/[、,]{2,}/g, "、")
+    .replace(/[、,\s]+$/, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+  if (text && !/[。！？!?]$/.test(text)) text += "。";
+  return text;
+}
+
 /* ---------------- 問診の質問定義 ---------------- */
 
 const QUESTIONS = [
@@ -418,7 +449,7 @@ const QUESTIONS = [
         draft.entryType = "noHeadache";
         return "頭痛なし";
       }
-      if (/あった|あります|ある|痛/.test(t)) {
+      if (/あっ?た|有った|ありました|あります|ある|痛/.test(t)) {
         draft.entryType = "headache";
         return "頭痛あり";
       }
@@ -631,8 +662,11 @@ const QUESTIONS = [
     quick: ["特にない"],
     collect: true, // 一言で確定せず、話し終わるまで聞き溜める
     handle(t, draft) {
-      if (/^(特にない|ありません|ないです|大丈夫)/.test(t.trim())) { draft.memo = ""; return "特になし"; }
-      draft.memo = t.trim();
+      const spoken = normalizeSpeechText(t);
+      draft.memoSpokenRaw = spoken;
+      if (/^(特にない|ありません|ないです|大丈夫)/.test(spoken)) { draft.memo = ""; return "特になし"; }
+      draft.memo = cleanSpokenMemo(spoken);
+      if (!draft.memo) return "特になし";
       return "メモに記録";
     },
   },
@@ -647,7 +681,7 @@ function blankDraft() {
     id: newId(), entryType: "headache", date: todayStr(), time: "", duration: "",
     durationMinutes: null, ongoing: false, severity: null, location: "",
     symptoms: [], triggers: [], med: "", medTiming: "", medCount: null,
-    medEffect: "", impact: "", auraDetail: "", memo: "", narrativeRaw: "",
+    medEffect: "", impact: "", auraDetail: "", memo: "", memoSpokenRaw: "", narrativeRaw: "",
     answeredFields: [], skippedFields: [], safetyFlags: [],
     source: "voice", createdAt: Date.now(),
   };
@@ -745,7 +779,7 @@ function submitAnswer(text) {
   const q = currentQuestion();
   if (!q || !text || !text.trim()) return;
 
-  const clean = text.trim();
+  const clean = normalizeSpeechText(text);
   const flags = redFlagsIn(clean);
   if (flags.length) showSafetyAlert(flags, interview.draft);
   const display = q.handle(clean, interview.draft);
