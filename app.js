@@ -917,7 +917,29 @@ function summaryRangeRecords() {
   return { startIso, endIso, recs: sortedRecords().filter((r) => r.date >= startIso && r.date <= endIso) };
 }
 
-function buildQrText(recs, startIso, endIso, limit) {
+/* 1件を1行に。印刷サマリーの表と同じ項目(きっかけ・影響・メモ含む)を入れる */
+function qrRecordLine(r) {
+  const parts = [
+    `${r.date.slice(5)}${r.time || ""}`,
+    ["", "軽", "中", "強"][r.severity] || "?",
+  ];
+  if (r.location) parts.push(r.location);
+  if ((r.symptoms || []).length) parts.push(r.symptoms.join("・"));
+  if ((r.triggers || []).length) parts.push(`誘因:${r.triggers.join("・")}`);
+  parts.push(r.med ? `薬:${r.med}→${r.medEffect || "?"}` : "薬なし");
+  if (r.impact) parts.push(r.impact);
+  if (r.memo) parts.push(`メモ:${r.memo}`);
+  return parts.join(" ");
+}
+
+/* 期間の全記録をQR複数枚に分割する。
+   QRは詰め込むほどドットが細かくなり画面からの読み取りが落ちるため、
+   1枚 ~450バイトに抑え、切り詰める代わりに枚数を増やす。
+   1枚に収まるときは従来と同じ形式(どのQRリーダーでもそのまま読める)。 */
+function buildQrParts() {
+  const { startIso, endIso, recs } = summaryRangeRecords();
+  if (!recs.length) return { parts: [], count: 0 };
+
   const days = new Set(recs.map((r) => r.date)).size;
   const medDays = new Set(recs.filter((r) => r.med).map((r) => r.date)).size;
   const sev3 = recs.filter((r) => r.severity === 3).length;
@@ -926,21 +948,42 @@ function buildQrText(recs, startIso, endIso, limit) {
   const trigTop = [...trigFreq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)
     .map(([t, n]) => `${t}${n}`).join(" ");
 
-  const lines = [
+  const header = [
     `【頭痛ダイアリー】${startIso}〜${endIso}`,
     `頭痛${days}日 服薬${medDays}日 強い発作${sev3}回`,
   ];
-  if (trigTop) lines.push(`誘因: ${trigTop}`);
-  lines.push(`─記録(新しい順)─`);
-  const list = recs.slice(0, limit); // sortedRecords は新しい順
-  for (const r of list) {
-    const sym = (r.symptoms || []).length ? " " + r.symptoms.join("・") : "";
-    const med = r.med ? ` 薬:${r.med}→${r.medEffect || "?"}` : "";
-    lines.push(`${r.date.slice(5)}${r.time || ""} ${["", "軽", "中", "強"][r.severity] || "?"} ${r.location || ""}${sym}${med}`);
+  if (trigTop) header.push(`誘因: ${trigTop}`);
+  header.push(`─記録(新しい順)─`);
+
+  const BUDGET = 450;
+  const bytes = (s) => new TextEncoder().encode(s).length;
+  const chunks = [];
+  let cur = [];
+  let curBytes = bytes(header.join("\n")); // 1枚目はヘッダー込みで数える
+  for (const r of recs) {
+    const line = qrRecordLine(r);
+    const cost = bytes(line) + 1;
+    if (cur.length && curBytes + cost > BUDGET) {
+      chunks.push(cur);
+      cur = [];
+      curBytes = 0;
+    }
+    cur.push(line);
+    curBytes += cost;
   }
-  if (recs.length > limit) lines.push(`…ほか${recs.length - limit}件は紙・画面で`);
-  return { text: lines.join("\n"), shown: list.length };
+  if (cur.length) chunks.push(cur);
+
+  const total = chunks.length;
+  const parts = chunks.map((lines, i) => {
+    const body = (i === 0 ? header.concat(lines) : lines).join("\n");
+    return total === 1 ? body : `【頭痛ダイアリー ${i + 1}/${total}】\n${body}`;
+  });
+  return { parts, count: recs.length };
 }
+
+let qrParts = [];
+let qrPartIndex = 0;
+let qrRecCount = 0;
 
 function renderQr() {
   const panel = $("qr-panel");
@@ -950,35 +993,51 @@ function renderQr() {
 
   if (typeof qrcode === "undefined") {
     img.innerHTML = "";
+    $("qr-nav").classList.add("hidden");
     info.textContent = "QRコードの部品を読み込めませんでした。インターネット接続を確認して、ページを開き直してください。";
     return;
   }
-  const { startIso, endIso, recs } = summaryRangeRecords();
-  if (!recs.length) {
+  const built = buildQrParts();
+  if (!built.parts.length) {
     img.innerHTML = "";
+    $("qr-nav").classList.add("hidden");
     info.textContent = "この期間の記録がありません。";
     return;
   }
+  qrParts = built.parts;
+  qrRecCount = built.count;
+  qrPartIndex = 0;
+  renderQrPart();
+}
+
+function renderQrPart() {
+  const img = $("qr-img");
+  const info = $("qr-info");
+  const nav = $("qr-nav");
+  const total = qrParts.length;
 
   qrcode.stringToBytes = qrcode.stringToBytesFuncs["UTF-8"];
-  const encoder = new TextEncoder();
-  let limit = Math.min(recs.length, 20);
-  let built = buildQrText(recs, startIso, endIso, limit);
-  // 画面のQRは詰め込みすぎると読み取りにくいので ~500バイトに収める
-  while (limit > 1 && encoder.encode(built.text).length > 500) {
-    limit--;
-    built = buildQrText(recs, startIso, endIso, limit);
-  }
-
   try {
     const qr = qrcode(0, "L"); // 画面表示は汚れ・破損がないので L で密度を下げる
-    qr.addData(built.text, "Byte");
+    qr.addData(qrParts[qrPartIndex], "Byte");
     qr.make();
     img.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0 });
-    info.textContent = `期間のまとめ＋直近${built.shown}件を収録（テキスト形式）。`;
   } catch (e) {
     img.innerHTML = "";
+    nav.classList.add("hidden");
     info.textContent = "QRコードを作れませんでした。期間を短くして試してください。";
+    return;
+  }
+
+  if (total > 1) {
+    nav.classList.remove("hidden");
+    $("qr-page").textContent = `QR ${qrPartIndex + 1} / ${total}`;
+    $("qr-prev").disabled = qrPartIndex === 0;
+    $("qr-next").disabled = qrPartIndex === total - 1;
+    info.textContent = `期間の全${qrRecCount}件を${total}枚に分割しています。受付で1枚目から順に読み取ってもらい、読み取れるたびに「次へ」で切り替えてください。`;
+  } else {
+    nav.classList.add("hidden");
+    info.textContent = `期間の全${qrRecCount}件を収録（テキスト形式）。`;
   }
 }
 
@@ -1160,6 +1219,12 @@ function init() {
     const panel = $("qr-panel");
     if (panel.classList.contains("hidden")) renderQr();
     else panel.classList.add("hidden");
+  });
+  $("qr-prev").addEventListener("click", () => {
+    if (qrPartIndex > 0) { qrPartIndex--; renderQrPart(); }
+  });
+  $("qr-next").addEventListener("click", () => {
+    if (qrPartIndex < qrParts.length - 1) { qrPartIndex++; renderQrPart(); }
   });
 
   // データ管理

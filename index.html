@@ -261,11 +261,18 @@
           <button id="btn-qr" class="open-btn">📱 QRコードで見せる</button>
         </div>
         <div id="qr-panel" class="qr-panel hidden">
-          <div class="qr-img" id="qr-img"></div>
+          <div class="qr-side">
+            <div class="qr-img" id="qr-img"></div>
+            <div class="qr-nav hidden" id="qr-nav">
+              <button id="qr-prev" class="open-btn">◀ 前へ</button>
+              <span id="qr-page" class="qr-page">QR 1 / 1</span>
+              <button id="qr-next" class="open-btn">次へ ▶</button>
+            </div>
+          </div>
           <div class="qr-note">
             <b>受付で読み取り</b>
-            期間のまとめと直近の記録がテキストで入っています。
-            カメラをかざすだけで、そのまま読めます。
+            印刷と同じ内容（期間のまとめ＋全記録）がテキストで入っています。
+            記録が多いときはQRが複数枚に分かれるので、受付で1枚目から順に読み取ってもらってください。
             <span id="qr-info" class="hint"></span>
           </div>
         </div>

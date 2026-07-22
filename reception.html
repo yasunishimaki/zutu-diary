@@ -109,6 +109,43 @@ function show(section) {
     $(id).classList.toggle("hidden", id !== section));
 }
 
+// 記録が多いとき、患者アプリはQRを「1/3」のように複数枚に分割して表示する。
+// ここで枚数分をため込み、全部そろったら1つのテキストに合成する。
+const multi = { total: 0, parts: {} };
+
+function resetMulti() {
+  multi.total = 0;
+  multi.parts = {};
+}
+
+function onDecoded(text) {
+  const m = text.match(/^【頭痛ダイアリー\s*(\d+)\/(\d+)】\n?/);
+  if (!m) {
+    // 従来の1枚形式(または他のQR)はそのまま表示
+    stopScan();
+    showResult(text);
+    return;
+  }
+  const idx = Number(m[1]);
+  const total = Number(m[2]);
+  if (multi.total !== total) resetMulti(); // 別の組が来たら仕切り直し
+  multi.total = total;
+  multi.parts[idx] = text.slice(m[0].length);
+
+  const got = Object.keys(multi.parts).length;
+  if (got >= total) {
+    stopScan();
+    const merged = [];
+    for (let i = 1; i <= total; i++) merged.push(multi.parts[i] || "");
+    resetMulti();
+    showResult(merged.join("\n"));
+    return;
+  }
+  let next = 0;
+  for (let i = 1; i <= total; i++) if (!multi.parts[i]) { next = i; break; }
+  $("live-status").textContent = `${got} / ${total} 枚を読み取りました。次は ${next} 枚目のQRをかざしてください`;
+}
+
 async function startScan() {
   if (typeof jsQR === "undefined") {
     $("idle-status").textContent = "読み取り部品を読み込めませんでした。接続を確認してページを開き直してください。";
@@ -123,6 +160,8 @@ async function startScan() {
     $("idle-status").textContent = "カメラを使用できません（許可が必要です）。下の貼り付け欄も使えます。";
     return;
   }
+  resetMulti();
+  $("live-status").textContent = "QRコードを枠に合わせてください…";
   const video = $("video");
   video.srcObject = stream;
   await video.play();
@@ -143,9 +182,8 @@ function scanFrame() {
     const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
     if (code && code.data && code.data.trim()) {
-      stopScan();
-      showResult(code.data);
-      return;
+      onDecoded(code.data.trim());
+      if (!scanning) return; // 全部そろって結果表示に移った
     }
   }
   requestAnimationFrame(scanFrame);
