@@ -12,15 +12,59 @@ const STORAGE_KEY = "zutsu-diary-v1";
 
 let state = {
   records: [],                       // 記録の配列
-  settings: { soundOn: true, speechRate: 1.0 },
+  settings: { soundOn: true, speechRate: 1.0, aiSummaryOn: false },
 };
+
+function isHeadacheRecord(r) { return r.entryType !== "noHeadache"; }
+function answered(r, key) { return Array.isArray(r.answeredFields) && r.answeredFields.includes(key); }
+function markAnswered(r, key) {
+  if (!Array.isArray(r.answeredFields)) r.answeredFields = [];
+  if (!r.answeredFields.includes(key)) r.answeredFields.push(key);
+}
+function markSkipped(r, key) {
+  if (!Array.isArray(r.skippedFields)) r.skippedFields = [];
+  if (!r.skippedFields.includes(key)) r.skippedFields.push(key);
+}
+
+const FIELD_LABELS = {
+  overview: "自由に話した内容", time: "始まった時間", duration: "続いた時間",
+  severity: "痛みの強さ", location: "痛む場所", quality: "痛み方",
+  movement: "動いたときの変化", aura: "痛む前の見え方の変化",
+  auraDetail: "見え方の変化の内容と時間",
+  nausea: "吐き気・嘔吐", photophono: "光・音", triggers: "思い当たるきっかけ",
+  med: "薬の名前", medTiming: "薬を飲んだ時刻・回数", medEffect: "薬の効きめ",
+  impact: "生活への影響", memo: "先生に伝えたいこと",
+};
+function fieldLabel(key) { return FIELD_LABELS[key] || key; }
+function emptyAnswerText(r, key, whenAnswered = "なし") {
+  if (answered(r, key)) return whenAnswered;
+  return Array.isArray(r.answeredFields) ? "未確認" : "旧版では未記録";
+}
+
+function normalizeRecord(r) {
+  // 旧版でAI要約済みの記録は、本人の原文を主データへ戻す。
+  if (r.memoRaw && !r.memoSummary) {
+    r.memoSummary = r.memo || "";
+    r.memo = r.memoRaw;
+  }
+  if (!r.entryType) r.entryType = "headache";
+  if (!Array.isArray(r.symptoms)) r.symptoms = [];
+  const symptomNames = {
+    "拍動性": "ズキズキする痛み", "前兆": "痛む前の見え方の変化",
+    "前兆あり": "痛む前の見え方の変化", "吐き気": "吐き気あり",
+    "嘔吐あり": "実際に吐いた",
+  };
+  r.symptoms = [...new Set(r.symptoms.map((x) => symptomNames[x] || x))];
+  if (!Array.isArray(r.triggers)) r.triggers = [];
+  return r;
+}
 
 function load() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const data = JSON.parse(raw);
-      state.records = Array.isArray(data.records) ? data.records : [];
+      state.records = Array.isArray(data.records) ? data.records.map(normalizeRecord) : [];
       Object.assign(state.settings, data.settings || {});
     }
   } catch (_) { /* 壊れていたら初期状態で開始 */ }
@@ -255,13 +299,147 @@ function parseImpact(t) {
   return null;
 }
 
+function parseNarrativeSeverity(t) {
+  if (/激し|ひど|強い痛|寝込|動けな|最悪/.test(t)) return 3;
+  if (/中くらい|中等度|そこそこ|まあまあの痛/.test(t)) return 2;
+  if (/軽い痛|軽い頭痛|少し痛|ちょっと痛|弱い痛/.test(t)) return 1;
+  const m = t.match(/(?:痛みの強さ|痛みは|強さは|程度は).{0,8}(10|[0-9])(?:段階|点|くらい|\/10)?/);
+  if (!m) return null;
+  const v = Number(m[1]);
+  return v <= 3 ? 1 : v <= 6 ? 2 : 3;
+}
+
+function addSymptom(draft, label) {
+  if (!draft.symptoms.includes(label)) draft.symptoms.push(label);
+}
+
+function parseDuration(t) {
+  if (/まだ.*(続|痛)|続いて|治まっていない|おさまっていない/.test(t)) {
+    return { label: "まだ続いている", minutes: null, ongoing: true };
+  }
+  let m = t.match(/(\d+)\s*時間半/);
+  if (m) return { label: `${m[1]}時間半くらい`, minutes: Number(m[1]) * 60 + 30, ongoing: false };
+  m = t.match(/(\d+(?:\.\d+)?)\s*時間/);
+  if (m) return { label: `${m[1]}時間くらい`, minutes: Math.round(Number(m[1]) * 60), ongoing: false };
+  m = t.match(/(\d+)\s*分/);
+  if (m) return { label: `${m[1]}分くらい`, minutes: Number(m[1]), ongoing: false };
+  m = t.match(/(\d+)\s*日/);
+  if (m) return { label: `${m[1]}日くらい`, minutes: Number(m[1]) * 1440, ongoing: false };
+  if (/半日以上/.test(t)) return { label: "半日以上", minutes: 720, ongoing: false };
+  if (/半日|12時間/.test(t)) return { label: "半日くらい", minutes: 720, ongoing: false };
+  if (/一日|1日|丸一日/.test(t)) return { label: "1日くらい", minutes: 1440, ongoing: false };
+  if (/30分|三十分/.test(t)) return { label: "30分くらい", minutes: 30, ongoing: false };
+  if (/1[〜～~-]3時間/.test(t)) return { label: "1〜3時間", minutes: 120, ongoing: false };
+  if (/4[〜～~-]12時間/.test(t)) return { label: "4〜12時間", minutes: 480, ongoing: false };
+  return null;
+}
+
+function parseMedTiming(t) {
+  const raw = t.trim().slice(0, 80);
+  if (!raw) return null;
+  let count = null;
+  const n = raw.match(/(\d+)\s*(回|錠)/);
+  if (n && !/以上/.test(raw)) count = Number(n[1]);
+  else if (/一回|1回|一錠|1錠/.test(raw)) count = 1;
+  else if (/二回|2回|二錠|2錠/.test(raw)) count = 2;
+  return { label: raw, count };
+}
+
+const RED_FLAG_RULES = [
+  { re: /(突然|急に|いきなり).*(激し|ひど|最悪)|(今まで|これまで).*(ない|無い).*(痛|頭痛)/, label: "突然の、いつもと違う強い頭痛" },
+  { re: /しびれ|麻痺|まひ|ろれつ|言葉が出|話しにく|意識|けいれん/, label: "しびれ、話しにくさ、意識の変化など" },
+  { re: /発熱|高熱|熱が(ある|出た|高い)/, label: "発熱を伴う頭痛" },
+  { re: /(頭|あたま).*(打った|ぶつけた)|転倒|交通事故/, label: "頭を打った後の頭痛" },
+  { re: /妊娠中|産後|出産後/, label: "妊娠中または出産後の頭痛" },
+];
+
+function redFlagsIn(text) {
+  return RED_FLAG_RULES.filter((x) => x.re.test(text)).map((x) => x.label);
+}
+
+function extractNarrative(text, draft) {
+  draft.narrativeRaw = text.trim();
+  const time = parseTime(text);
+  if (time) {
+    if (time.dateOffset) draft.date = todayStr(time.dateOffset);
+    draft.time = time.time || "";
+    markAnswered(draft, "time");
+  }
+  const duration = parseDuration(text);
+  if (duration) {
+    draft.duration = duration.label; draft.durationMinutes = duration.minutes; draft.ongoing = duration.ongoing;
+    markAnswered(draft, "duration");
+  }
+  const severity = parseNarrativeSeverity(text);
+  if (severity) { draft.severity = severity; markAnswered(draft, "severity"); }
+  const locations = parseLocations(text);
+  if (locations) { draft.location = locations.join("、"); markAnswered(draft, "location"); }
+
+  if (/ズキ|脈打/.test(text)) { addSymptom(draft, "ズキズキする痛み"); markAnswered(draft, "quality"); }
+  else if (/締め|しめ|圧迫|重い感じ/.test(text)) { addSymptom(draft, "締めつける痛み"); markAnswered(draft, "quality"); }
+  if (/(動くと|歩くと|階段|体を動か).*(悪|強|つら)|じっとしていた/.test(text)) {
+    addSymptom(draft, "動くと悪化"); markAnswered(draft, "movement");
+  } else if (/(動いても|歩いても|階段でも).*(変わら|平気|大丈夫)|動くと.*(変わら|悪くなら)/.test(text)) {
+    markAnswered(draft, "movement");
+  }
+  if (/(前兆|ギザギザ|チカチカ).{0,8}(ない|なく|なし|ありません|なかった)/.test(text)) markAnswered(draft, "aura");
+  else if (/前兆|ギザギザ|チカチカ|視野.*欠/.test(text)) { addSymptom(draft, "痛む前の見え方の変化"); markAnswered(draft, "aura"); }
+  if (/吐い(た|て)|吐きました|嘔吐/.test(text)) { addSymptom(draft, "実際に吐いた"); markAnswered(draft, "nausea"); }
+  else if (/(吐き気|むかむか).{0,8}(ない|なく|なし|ありません|なかった)/.test(text)) markAnswered(draft, "nausea");
+  else if (/吐き気|むかむか/.test(text)) { addSymptom(draft, "吐き気あり"); markAnswered(draft, "nausea"); }
+  const noLightSound = /(光|音|まぶし|うるさ).{0,16}(つらくない|つらくなかった|平気|大丈夫|気にならない|気にならなかった)/.test(text);
+  const light = !noLightSound && /光|まぶし|眩し/.test(text);
+  const sound = !noLightSound && /音|うるさ/.test(text);
+  if (light || sound) {
+    if (light) addSymptom(draft, "光がつらい");
+    if (sound) addSymptom(draft, "音がつらい");
+    markAnswered(draft, "photophono");
+  } else if (noLightSound) markAnswered(draft, "photophono");
+  const knownTriggers = /寝不足|睡眠不足|寝すぎ|寝過ぎ|天気|低気圧|台風|生理|月経|ストレス|疲れ|緊張|肩こり|首こり|お酒|アルコール|人混み|匂い|におい|スマホ|パソコン|画面|空腹/.test(text);
+  if (knownTriggers) { draft.triggers = parseTriggers(text) || []; markAnswered(draft, "triggers"); }
+  const medHits = MED_NAMES.filter((name) => text.includes(name));
+  if (medHits.length) { draft.med = medHits.join("、"); markAnswered(draft, "med"); }
+  else if (/薬.*(飲んでいない|飲んでない|飲まなかった)/.test(text)) markAnswered(draft, "med");
+  const effect = /(効|楽にな|治った|おさま|収ま|変わら|だめ|ダメ)/.test(text) ? parseMedEffect(text) : null;
+  if (effect && draft.med) { draft.medEffect = effect; markAnswered(draft, "medEffect"); }
+  const impact = parseImpact(text);
+  if (impact) { draft.impact = impact; markAnswered(draft, "impact"); }
+}
+
 /* ---------------- 問診の質問定義 ---------------- */
 
 const QUESTIONS = [
   {
+    key: "hasHeadache", label: "きょうの頭痛",
+    ask: "きょうは頭痛がありましたか？",
+    quick: ["あった", "なかった"],
+    handle(t, draft) {
+      if (/なかった|ありません|ないです|頭痛なし/.test(t)) {
+        draft.entryType = "noHeadache";
+        return "頭痛なし";
+      }
+      if (/あった|あります|ある|痛/.test(t)) {
+        draft.entryType = "headache";
+        return "頭痛あり";
+      }
+      return null;
+    },
+  },
+  {
+    key: "overview", label: "話してくれた内容",
+    ask: "まず、きょうの頭痛について自由に話してください。いつから、どこが、どんなふうに痛んだかなど、分かる範囲で大丈夫です。話し終わったら『以上です』と言ってください。",
+    quick: ["あとで質問に答える"], collect: true,
+    handle(t, draft) {
+      if (/^あとで質問に答える$/.test(t.trim())) return "個別に質問";
+      extractNarrative(t, draft);
+      return "話した内容を記録";
+    },
+  },
+  {
     key: "time", label: "始まった時間",
     ask: "頭痛はいつごろ始まりましたか？",
     quick: ["起床時", "朝", "昼", "夕方", "夜", "昨日から"],
+    skipIf: (draft) => answered(draft, "time"),
     handle(t, draft) {
       const r = parseTime(t);
       if (!r) return null;
@@ -271,9 +449,22 @@ const QUESTIONS = [
     },
   },
   {
+    key: "duration", label: "続いた時間",
+    ask: "頭痛はどれくらい続きましたか？まだ痛む場合は、まだ続いている、と答えてください。",
+    quick: ["30分くらい", "1〜3時間", "4〜12時間", "半日以上", "まだ続いている"],
+    skipIf: (draft) => answered(draft, "duration"),
+    handle(t, draft) {
+      const v = parseDuration(t);
+      if (!v) return null;
+      draft.duration = v.label; draft.durationMinutes = v.minutes; draft.ongoing = v.ongoing;
+      return v.label;
+    },
+  },
+  {
     key: "severity", label: "強さ",
     ask: "痛みの強さを教えてください。軽い、中くらい、強い、のどれですか？",
     quick: ["軽い", "中くらい", "強い"],
+    skipIf: (draft) => answered(draft, "severity"),
     handle(t, draft) {
       const v = parseSeverity(t);
       if (v == null) return null;
@@ -286,6 +477,7 @@ const QUESTIONS = [
     ask: "どのあたりが痛みますか？",
     quick: ["右側", "左側", "両側", "こめかみ", "目の奥", "後頭部", "頭全体"],
     multi: true,
+    skipIf: (draft) => answered(draft, "location"),
     handle(t, draft) {
       const v = parseLocations(t);
       if (!v) return null;
@@ -294,37 +486,62 @@ const QUESTIONS = [
     },
   },
   {
-    key: "throbbing", label: "ズキズキ",
-    ask: "ズキンズキンと脈打つような痛みですか？",
-    quick: ["はい", "いいえ", "締めつけられる感じ"],
+    key: "quality", label: "痛み方",
+    ask: "どんなふうに痛みますか？",
+    quick: ["ズキズキする", "締めつけられる", "重い感じ", "どれでもない"],
+    skipIf: (draft) => answered(draft, "quality"),
     handle(t, draft) {
-      if (/締め|しめ|圧迫/.test(t)) { return "締めつけ感"; }
-      const v = parseYesNo(t);
-      if (v == null) return null;
-      if (v) draft.symptoms.push("拍動性");
-      return v ? "はい" : "いいえ";
+      if (/ズキ|脈打/.test(t)) { addSymptom(draft, "ズキズキする痛み"); return "ズキズキする"; }
+      if (/締め|しめ|圧迫/.test(t)) { addSymptom(draft, "締めつける痛み"); return "締めつけられる"; }
+      if (/重い/.test(t)) { addSymptom(draft, "重い痛み"); return "重い感じ"; }
+      if (/どれでもない|その他|違う/.test(t)) return "どれでもない";
+      return null;
     },
   },
   {
-    key: "aura", label: "前兆",
+    key: "movement", label: "動いたとき",
+    ask: "歩いたり階段を上ったりすると、痛みが強くなりましたか？",
+    quick: ["強くなった", "変わらなかった", "動けなかった"],
+    skipIf: (draft) => answered(draft, "movement"),
+    handle(t, draft) {
+      if (/強く|悪化|つらく/.test(t)) { addSymptom(draft, "動くと悪化"); return "強くなった"; }
+      if (/動けな/.test(t)) { addSymptom(draft, "動けなかった"); return "動けなかった"; }
+      if (/変わら|ならな|いいえ|ない/.test(t)) return "変わらなかった";
+      return null;
+    },
+  },
+  {
+    key: "aura", label: "痛む前の見え方",
     ask: "痛み出す前に、ギザギザした光やチカチカなどの前兆はありましたか？",
     quick: ["はい", "いいえ"],
+    skipIf: (draft) => answered(draft, "aura"),
     handle(t, draft) {
       const v = parseYesNo(t);
       if (v == null) return null;
-      if (v) draft.symptoms.push("前兆");
+      if (v) addSymptom(draft, "痛む前の見え方の変化");
       return v ? "あった" : "なかった";
+    },
+  },
+  {
+    key: "auraDetail", label: "見え方の変化の詳しい内容",
+    ask: "どんなふうに見えて、どれくらい続きましたか？分かる範囲で教えてください。",
+    quick: ["5分より短かった", "5分〜1時間くらい", "1時間以上続いた", "覚えていない"],
+    skipIf: (draft) => !draft.symptoms.some((x) => ["前兆", "前兆あり", "痛む前の見え方の変化"].includes(x)) || answered(draft, "auraDetail"),
+    handle(t, draft) {
+      draft.auraDetail = t.trim().slice(0, 120);
+      return draft.auraDetail || null;
     },
   },
   {
     key: "nausea", label: "吐き気",
     ask: "吐き気はありますか？",
     quick: ["はい", "いいえ", "吐いた"],
+    skipIf: (draft) => answered(draft, "nausea"),
     handle(t, draft) {
-      if (/吐いた|嘔吐/.test(t)) { draft.symptoms.push("吐き気"); return "嘔吐あり"; }
+      if (/吐い(た|て)|吐きました|嘔吐/.test(t)) { addSymptom(draft, "実際に吐いた"); return "吐いた"; }
       const v = parseYesNo(t);
       if (v == null) return null;
-      if (v) draft.symptoms.push("吐き気");
+      if (v) addSymptom(draft, "吐き気あり");
       return v ? "ある" : "ない";
     },
   },
@@ -332,13 +549,14 @@ const QUESTIONS = [
     key: "photophono", label: "光・音",
     ask: "光や音が、いつもよりつらく感じますか？",
     quick: ["両方つらい", "光だけ", "音だけ", "いいえ"],
+    skipIf: (draft) => answered(draft, "photophono"),
     handle(t, draft) {
       const hikari = /光|ひかり|まぶし|眩し/.test(t);
       const oto = /音|おと|うるさ/.test(t);
       const v = parseYesNo(t);
       if (!hikari && !oto && v == null) return null;
-      if (hikari || (v && !oto)) draft.symptoms.push("光がつらい");
-      if (oto || (v && !hikari)) draft.symptoms.push("音がつらい");
+      if (hikari || (v && !oto)) addSymptom(draft, "光がつらい");
+      if (oto || (v && !hikari)) addSymptom(draft, "音がつらい");
       if (v === false && !hikari && !oto) return "いいえ";
       return [hikari || v ? "光" : null, oto || v ? "音" : null].filter(Boolean).join("・") + "がつらい";
     },
@@ -348,6 +566,7 @@ const QUESTIONS = [
     ask: "思い当たるきっかけはありますか？たとえば、寝不足、天気、ストレス、生理、など。",
     quick: ["寝不足", "寝すぎ", "天気・低気圧", "生理", "ストレス", "肩こり", "アルコール"],
     multi: true, multiNone: "特にない",
+    skipIf: (draft) => answered(draft, "triggers"),
     handle(t, draft) {
       const v = parseTriggers(t);
       if (v === null) return null;
@@ -357,9 +576,10 @@ const QUESTIONS = [
   },
   {
     key: "med", label: "薬",
-    ask: "お薬は飲みましたか？飲んだ場合は、薬の名前を教えてください。",
+    ask: "この頭痛が起きたときに使う薬は飲みましたか？飲んだ場合は、薬の名前を教えてください。",
     quick: ["飲んでいない"],
     freeText: true,
+    skipIf: (draft) => answered(draft, "med"),
     handle(t, draft) {
       if (/飲んでいない|飲んでない|飲まな|なし|ない/.test(t)) { draft.med = ""; return "飲んでいない"; }
       const name = t.replace(/を?飲みました|を?飲んだ|です|飲みます/g, "").trim();
@@ -369,10 +589,22 @@ const QUESTIONS = [
     },
   },
   {
+    key: "medTiming", label: "薬を飲んだタイミング",
+    ask: "頭痛が始まってどれくらいで、薬を何回分飲みましたか？たとえば『30分くらいで1錠』のように教えてください。",
+    quick: ["すぐに1回分", "30分以内に1回分", "1時間くらいで1回分", "2時間以上たって1回分", "2回分以上"],
+    skipIf: (draft) => !draft.med || answered(draft, "medTiming"),
+    handle(t, draft) {
+      const v = parseMedTiming(t);
+      if (!v) return null;
+      draft.medTiming = v.label; draft.medCount = v.count;
+      return v.label;
+    },
+  },
+  {
     key: "medEffect", label: "薬の効きめ",
     ask: "お薬は効きましたか？",
     quick: ["よく効いた", "少し効いた", "効かなかった", "まだわからない"],
-    skipIf: (draft) => !draft.med,
+    skipIf: (draft) => !draft.med || answered(draft, "medEffect"),
     handle(t, draft) {
       if (/まだ|わからない|分からない/.test(t)) { draft.medEffect = "まだ不明"; return "まだ不明"; }
       const v = parseMedEffect(t);
@@ -385,6 +617,7 @@ const QUESTIONS = [
     key: "impact", label: "生活への影響",
     ask: "きょうの生活への影響はどうでしたか？普段どおり、支障があった、寝込んだ、のどれですか？",
     quick: ["普段どおり", "支障あり", "寝込んだ"],
+    skipIf: (draft) => answered(draft, "impact"),
     handle(t, draft) {
       const v = parseImpact(t);
       if (!v) return null;
@@ -411,8 +644,11 @@ let interview = null; // { idx, draft, answers: [{label, display}], retries }
 
 function blankDraft() {
   return {
-    id: newId(), date: todayStr(), time: "", severity: null, location: "",
-    symptoms: [], triggers: [], med: "", medEffect: "", impact: "", memo: "",
+    id: newId(), entryType: "headache", date: todayStr(), time: "", duration: "",
+    durationMinutes: null, ongoing: false, severity: null, location: "",
+    symptoms: [], triggers: [], med: "", medTiming: "", medCount: null,
+    medEffect: "", impact: "", auraDetail: "", memo: "", narrativeRaw: "",
+    answeredFields: [], skippedFields: [], safetyFlags: [],
     source: "voice", createdAt: Date.now(),
   };
 }
@@ -423,6 +659,7 @@ function startInterview() {
   $("interview-idle").classList.add("hidden");
   $("interview-confirm").classList.add("hidden");
   $("interview-live").classList.remove("hidden");
+  $("safety-alert").classList.add("hidden");
   $("answered-chips").innerHTML = "";
   askCurrent(true);
 }
@@ -443,7 +680,7 @@ function askCurrent(fresh) {
 
   const visibleCount = QUESTIONS.filter(x => !(x.skipIf && x.skipIf(interview.draft))).length;
   const visibleIdx = QUESTIONS.slice(0, interview.idx).filter(x => !(x.skipIf && x.skipIf(interview.draft))).length;
-  $("q-progress").textContent = `Q ${visibleIdx + 1} / ${visibleCount}`;
+  $("q-progress").textContent = `質問 ${visibleIdx + 1} / ${visibleCount}`;
   $("q-text").textContent = q.ask;
   $("q-input").value = "";
   collectCommitted = "";
@@ -508,7 +745,10 @@ function submitAnswer(text) {
   const q = currentQuestion();
   if (!q || !text || !text.trim()) return;
 
-  const display = q.handle(text.trim(), interview.draft);
+  const clean = text.trim();
+  const flags = redFlagsIn(clean);
+  if (flags.length) showSafetyAlert(flags, interview.draft);
+  const display = q.handle(clean, interview.draft);
   if (display === null) {
     interview.retries++;
     if (interview.retries <= 1) {
@@ -520,8 +760,14 @@ function submitAnswer(text) {
     return;
   }
 
+  markAnswered(interview.draft, q.key);
   interview.answers.push({ label: q.label, display });
   renderAnsweredChips();
+  if (q.key === "hasHeadache" && interview.draft.entryType === "noHeadache") {
+    interview.idx = QUESTIONS.length;
+    askCurrent(true);
+    return;
+  }
   interview.idx++;
   askCurrent(true);
 }
@@ -562,8 +808,19 @@ function collectUpdate(sessionFinals) {
 function skipCurrent() {
   if (!interview) return;
   stopSpeech(); // マイクは開いたまま次の質問へ
+  const q = currentQuestion();
+  if (q) markSkipped(interview.draft, q.key);
   interview.idx++;
   askCurrent(true);
+}
+
+function showSafetyAlert(flags, draft) {
+  for (const flag of flags) if (!draft.safetyFlags.includes(flag)) draft.safetyFlags.push(flag);
+  const box = $("safety-alert");
+  box.innerHTML = `<strong>記録を続ける前に確認してください</strong>
+    <p>${escapeHtml([...new Set(draft.safetyFlags)].join("、"))}が話に含まれていました。すぐに医療機関へ相談してください。意識がおかしい、体が動かないなど緊急の場合は119番へ連絡してください。</p>`;
+  box.classList.remove("hidden");
+  speak("急いで受診したほうがよい症状が含まれている可能性があります。画面の案内を確認してください。");
 }
 
 function abortInterview(silent) {
@@ -582,7 +839,19 @@ function finishInterview() {
   const d = interview.draft;
   interview = null;
 
-  // 最後の質問に答えた時点で自動保存する
+  // 頭痛なしは同じ日の「頭痛なし」を更新する。頭痛記録がある日は上書きしない。
+  if (d.entryType === "noHeadache") {
+    if (state.records.some((r) => r.date === d.date && isHeadacheRecord(r))) {
+      $("interview-live").classList.add("hidden");
+      $("interview-confirm").classList.add("hidden");
+      $("interview-idle").classList.remove("hidden");
+      toast("この日はすでに頭痛の記録があります");
+      return;
+    }
+    state.records = state.records.filter((r) => !(r.date === d.date && !isHeadacheRecord(r)));
+  } else {
+    state.records = state.records.filter((r) => !(r.date === d.date && !isHeadacheRecord(r)));
+  }
   state.records.push(d);
   save();
   renderRecent();
@@ -590,20 +859,34 @@ function finishInterview() {
 
   $("interview-live").classList.add("hidden");
   $("interview-confirm").classList.remove("hidden");
-  const rows = [
+  const confirmSafety = $("confirm-safety");
+  if (d.safetyFlags.length) {
+    confirmSafety.innerHTML = `<strong>記録だけで済ませず、すぐに相談してください</strong><p>${escapeHtml(d.safetyFlags.join("、"))}が話に含まれていました。すぐに医療機関へ相談してください。意識がおかしい、体が動かないなど緊急の場合は119番へ連絡してください。</p>`;
+    confirmSafety.classList.remove("hidden");
+  } else {
+    confirmSafety.classList.add("hidden");
+  }
+  const rows = d.entryType === "noHeadache" ? [
+    ["日付", fmtDate(d.date)],
+    ["記録", "頭痛はなかった"],
+  ] : [
     ["日付", `${fmtDate(d.date)} ${d.time}`],
+    ["続いた時間", d.duration || "未確認"],
     ["強さ", d.severity ? ["", "軽い", "中くらい", "強い"][d.severity] : "─"],
     ["場所", d.location || "─"],
     ["症状", d.symptoms.join("、") || "─"],
+    ["痛む前の見え方の詳しい内容", d.auraDetail || "─"],
     ["きっかけ", d.triggers.join("、") || "特になし"],
-    ["薬", d.med ? `${d.med}（${d.medEffect || "効果未記入"}）` : "飲んでいない"],
+    ["薬", d.med ? `${d.med}（${d.medTiming || "飲んだ時刻・回数は未確認"}、${d.medEffect || "効きめは未確認"}）` : "飲んでいない"],
     ["生活への影響", d.impact || "─"],
+    ["最初に話した内容", d.narrativeRaw || "─"],
     ["メモ", d.memo || "─"],
+    ["質問を飛ばした項目", d.skippedFields.length ? d.skippedFields.map(fieldLabel).join("、") : "なし"],
   ];
   $("confirm-list").innerHTML = rows.map(([k, v]) =>
     `<dt>${k}</dt><dd${k === "メモ" ? ' id="confirm-memo"' : ""}>${escapeHtml(v)}</dd>`).join("");
-  toast(`${fmtDate(d.date)} の頭痛を記録しました`);
-  speak("記録しました。お大事にしてください。");
+  toast(d.entryType === "noHeadache" ? `${fmtDate(d.date)} は頭痛なしで記録しました` : `${fmtDate(d.date)} の頭痛を記録しました`);
+  speak(d.safetyFlags.length ? "記録だけで済ませず、画面の案内を確認して、すぐに医療機関へ相談してください。" : d.entryType === "noHeadache" ? "頭痛がなかった日として記録しました。" : "記録しました。お大事にしてください。");
   summarizeMemoIfLong(d); // 長い自由発話のメモは裏で要約(失敗しても原文が残る)
 }
 
@@ -621,13 +904,13 @@ function closeConfirm() {
 }
 
 /* ---------------- メモの自由発話を要約する ----------------
-   長いメモだけ /api/summarize (Pages Functions → Anthropic API) に送る。
+   本人が許可した場合だけ、長いメモを /api/summarize (Pages Functions → OpenAI API) に送る。
    API未設定・オフライン・エラー時は原文のまま残す(要約は上乗せ機能)。 */
 
 const SUMMARIZE_MIN_CHARS = 40;
 
 async function summarizeMemoIfLong(record) {
-  if (!record.memo || record.memo.length < SUMMARIZE_MIN_CHARS) return;
+  if (!state.settings.aiSummaryOn || !record.memo || record.memo.length < SUMMARIZE_MIN_CHARS) return;
   try {
     const res = await fetch("/api/summarize", {
       method: "POST",
@@ -640,21 +923,30 @@ async function summarizeMemoIfLong(record) {
 
     const r = state.records.find((x) => x.id === record.id);
     if (!r) return; // 取り消し済みなら何もしない
-    r.memoRaw = r.memo; // 原文も保持
-    r.memo = summary;
+    r.memoSummary = summary; // 本人の原文は r.memo に残す
     save();
     renderRecent();
 
-    // 保存直後の控え画面が開いていれば、メモ表示も差し替える
-    const memoEl = $("confirm-memo");
-    if (memoEl && lastInterviewRecord && lastInterviewRecord.id === r.id) {
-      memoEl.textContent = summary;
-      toast("メモを要約しました");
-    }
+    if (lastInterviewRecord && lastInterviewRecord.id === r.id) toast("医師向けの短いまとめを追加しました");
   } catch (_) { /* 原文のまま */ }
 }
 
 /* ---------------- フォーム入力 ---------------- */
+
+function saveNoHeadache(date = todayStr()) {
+  if (state.records.some((r) => r.date === date && isHeadacheRecord(r))) {
+    toast("この日はすでに頭痛の記録があります");
+    return;
+  }
+  state.records = state.records.filter((r) => !(r.date === date && !isHeadacheRecord(r)));
+  state.records.push(normalizeRecord({
+    id: newId(), entryType: "noHeadache", date, source: "quick",
+    symptoms: [], triggers: [], answeredFields: ["hasHeadache"], skippedFields: [],
+    createdAt: Date.now(),
+  }));
+  save(); renderRecent(); renderCalendar(); renderSummary();
+  toast(`${fmtDate(date)} は頭痛なしで記録しました`);
+}
 
 function setupChips(el, single) {
   el.querySelectorAll("button").forEach((b) => {
@@ -664,6 +956,13 @@ function setupChips(el, single) {
         el.querySelectorAll("button").forEach((x) => x.classList.remove("sel"));
         if (!was) b.classList.add("sel");
       } else {
+        if (b.dataset.none === "true") {
+          const willSelect = !b.classList.contains("sel");
+          el.querySelectorAll("button").forEach((x) => x.classList.remove("sel"));
+          if (willSelect) b.classList.add("sel");
+          return;
+        }
+        el.querySelectorAll("button[data-none='true']").forEach((x) => x.classList.remove("sel"));
         b.classList.toggle("sel");
       }
     });
@@ -682,21 +981,56 @@ function submitForm(e) {
   e.preventDefault();
   const severity = Number(chipValue($("f-severity")));
   if (!severity) { toast("痛みの強さを選んでください"); return; }
+  const durationText = $("f-duration-free").value.trim() || $("f-duration").value;
+  const parsedDuration = parseDuration(durationText || "");
+  const med = normalizeMedName($("f-med").value);
+  const medTiming = $("f-medtiming").value.trim();
+  if (med && $("f-no-med").checked) {
+    toast("薬の名前か「飲んでいない」のどちらか一方を選んでください");
+    return;
+  }
+  const symptomChoices = chipValues($("f-symptoms"));
+  const triggerChoices = chipValues($("f-triggers"));
   const rec = {
     id: newId(),
+    entryType: "headache",
     date: $("f-date").value || todayStr(),
     time: $("f-time").value,
+    duration: durationText,
+    durationMinutes: parsedDuration?.minutes ?? null,
+    ongoing: parsedDuration?.ongoing || false,
     severity,
     location: chipValues($("f-location")).join("、"),
-    symptoms: chipValues($("f-symptoms")),
-    triggers: chipValues($("f-triggers")),
-    med: normalizeMedName($("f-med").value),
+    symptoms: symptomChoices.filter((x) => x !== "症状なし"),
+    triggers: triggerChoices.filter((x) => x !== "特になし"),
+    med,
+    medTiming,
+    medCount: parseMedTiming(medTiming)?.count ?? null,
     medEffect: $("f-medeffect").value,
     impact: chipValue($("f-impact")),
+    auraDetail: $("f-aura-detail").value.trim(),
     memo: $("f-memo").value.trim(),
+    answeredFields: ["severity"],
+    skippedFields: [],
+    safetyFlags: redFlagsIn($("f-memo").value.trim()),
     source: "form",
     createdAt: Date.now(),
   };
+  if (rec.time) markAnswered(rec, "time");
+  if (rec.duration) markAnswered(rec, "duration");
+  if (rec.location) markAnswered(rec, "location");
+  if (symptomChoices.length) ["quality", "movement", "aura", "nausea", "photophono"].forEach((k) => markAnswered(rec, k));
+  if (rec.auraDetail) markAnswered(rec, "auraDetail");
+  if (triggerChoices.length) markAnswered(rec, "triggers");
+  if (rec.med || $("f-no-med").checked) markAnswered(rec, "med");
+  if (rec.medTiming) markAnswered(rec, "medTiming");
+  if (rec.medEffect) markAnswered(rec, "medEffect");
+  if (rec.impact) markAnswered(rec, "impact");
+  if (rec.memo) markAnswered(rec, "memo");
+  if (rec.safetyFlags.length) {
+    window.alert("急いで受診したほうがよい症状が含まれている可能性があります。すぐに医療機関へ相談してください。意識がおかしい、体が動かないなど緊急の場合は119番へ連絡してください。");
+  }
+  state.records = state.records.filter((r) => !(r.date === rec.date && !isHeadacheRecord(r)));
   state.records.push(rec);
   save();
   summarizeMemoIfLong(rec);
@@ -715,22 +1049,33 @@ function escapeHtml(s) {
 }
 
 function entryHtml(r, withDelete) {
-  const sevMark = ["", "△", "○", "◎"][r.severity] || "?";
-  const sevLabel = ["", "軽い", "中", "強い"][r.severity] || "?";
+  if (!isHeadacheRecord(r)) {
+    return `<div class="entry no-headache-entry">
+      <div class="e-sev-mark">なし<small>頭痛</small></div>
+      <div><div class="e-head"><span class="e-date">${fmtDate(r.date)}</span>
+      ${withDelete ? `<button class="e-del" data-del="${r.id}">削除</button>` : ""}</div>
+      <div class="e-body">この日は頭痛がなかったと記録しました。</div></div></div>`;
+  }
+  const sevMark = ["", "軽", "中", "強"][r.severity] || "未";
+  const sevLabel = ["", "軽い", "中くらい", "強い"][r.severity] || "未確認";
   const parts = [];
+  parts.push(`続いた時間: ${r.duration || emptyAnswerText(r, "duration", "未入力")}`);
   if (r.location) parts.push(`場所: ${r.location}`);
   if (r.symptoms && r.symptoms.length) parts.push(`症状: ${r.symptoms.join("、")}`);
+  if (r.auraDetail) parts.push(`痛む前の見え方: ${r.auraDetail}`);
   if (r.triggers && r.triggers.length) parts.push(`きっかけ: ${r.triggers.join("、")}`);
-  parts.push(r.med ? `薬: ${r.med}${r.medEffect ? `（${r.medEffect}）` : ""}` : "薬: なし");
+  parts.push(r.med ? `薬: ${r.med}${r.medTiming ? `（${r.medTiming}）` : ""}${r.medEffect ? `・${r.medEffect}` : ""}` : `薬: ${emptyAnswerText(r, "med", "飲んでいない")}`);
   if (r.impact) parts.push(`影響: ${r.impact}`);
-  if (r.memo) parts.push(`メモ${r.memoRaw ? "(要約)" : ""}: ${r.memo}`);
+  if (r.memoSummary) parts.push(`医師向けの短いまとめ: ${r.memoSummary}`);
+  if (r.narrativeRaw) parts.push(`最初に話した内容: ${r.narrativeRaw}`);
+  if (r.memo) parts.push(`本人の言葉: ${r.memo}`);
   return `<div class="entry sev${r.severity}">
     <div class="e-sev-mark">${sevMark}<small>${sevLabel}</small></div>
     <div>
       <div class="e-head">
         <span class="e-date">${fmtDate(r.date)} ${escapeHtml(r.time || "")}</span>
-        <span class="e-src">${r.source === "voice" ? "🎤 voice" : "✍️ form"}</span>
-        ${withDelete ? `<button class="e-del" data-del="${r.id}">delete</button>` : ""}
+        <span class="e-src">${r.source === "voice" ? "音声で記録" : "フォームで記録"}</span>
+        ${withDelete ? `<button class="e-del" data-del="${r.id}">削除</button>` : ""}
       </div>
       <div class="e-body">${escapeHtml(parts.join(" ／ "))}</div>
     </div>
@@ -793,14 +1138,17 @@ function renderCalendar() {
   for (let d = 1; d <= daysInMonth; d++) {
     const iso = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
     const recs = map.get(iso) || [];
-    const maxSev = recs.reduce((m, r) => Math.max(m, r.severity || 0), 0);
-    const hasMed = recs.some((r) => r.med);
+    const headacheRecs = recs.filter(isHeadacheRecord);
+    const maxSev = headacheRecs.reduce((m, r) => Math.max(m, r.severity || 0), 0);
+    const hasMed = headacheRecs.some((r) => r.med);
+    const confirmedNoHeadache = recs.some((r) => !isHeadacheRecord(r)) && !headacheRecs.length;
     const cls = ["cal-cell"];
     if (maxSev) cls.push(`sev${maxSev}`);
+    if (confirmedNoHeadache) cls.push("no-headache");
     if (iso === today) cls.push("today");
     if (iso === selectedDay) cls.push("selected");
     html += `<div class="${cls.join(" ")}" data-day="${iso}">
-      <span class="d">${d}</span>${hasMed ? `<span class="med">💊</span>` : ""}
+      <span class="d">${d}</span>${hasMed ? `<span class="med">💊</span>` : ""}${confirmedNoHeadache ? `<span class="no-headache-mark">✓</span>` : ""}
     </div>`;
   }
   $("cal-grid").innerHTML = html;
@@ -811,15 +1159,18 @@ function renderCalendar() {
   // 月間集計
   const monthPrefix = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-`;
   const monthRecs = state.records.filter((r) => r.date.startsWith(monthPrefix));
-  const headacheDays = new Set(monthRecs.map((r) => r.date)).size;
-  const medDays = new Set(monthRecs.filter((r) => r.med).map((r) => r.date)).size;
-  const severe = monthRecs.filter((r) => r.severity === 3).length;
+  const headacheMonthRecs = monthRecs.filter(isHeadacheRecord);
+  const headacheDays = new Set(headacheMonthRecs.map((r) => r.date)).size;
+  const recordedDays = new Set(monthRecs.map((r) => r.date)).size;
+  const medDays = new Set(headacheMonthRecs.filter((r) => r.med).map((r) => r.date)).size;
+  const severe = headacheMonthRecs.filter((r) => r.severity === 3).length;
   let statsHtml = `
     <div class="stat"><div class="n">${headacheDays}</div><div class="l">頭痛のあった日</div></div>
+    <div class="stat"><div class="n">${recordedDays}</div><div class="l">記録できた日</div></div>
     <div class="stat"><div class="n ${medDays >= 10 ? "warn" : ""}">${medDays}</div><div class="l">薬を飲んだ日</div></div>
     <div class="stat"><div class="n">${severe}</div><div class="l">強い発作の回数</div></div>`;
   if (medDays >= 10) {
-    statsHtml += `<div class="stat-note">💊 この月は薬を飲んだ日が ${medDays}日 あります。頭痛薬を月10日以上飲む状態が続くと、薬の使いすぎによる頭痛（薬剤の使用過多による頭痛）につながることがあります。この画面を先生に見せて相談してください。</div>`;
+    statsHtml += `<div class="stat-note">この月は頭痛の薬を飲んだ日が${medDays}日あります。使いすぎの目安は薬の種類によって月10日または15日で、その状態が3か月を超えて続くかも重要です。自己判断で薬をやめず、この画面を先生に見せて相談してください。</div>`;
   }
   $("cal-stats").innerHTML = statsHtml;
 
@@ -837,7 +1188,7 @@ function renderCalendar() {
   }
 }
 
-/* ---------------- 受診サマリー ---------------- */
+/* ---------------- 受診メモ ---------------- */
 
 let summaryMonths = 1;
 
@@ -856,30 +1207,67 @@ function renderSummary() {
     return;
   }
 
-  const headacheDays = new Set(recs.map((r) => r.date)).size;
-  const medDays = new Set(recs.filter((r) => r.med).map((r) => r.date)).size;
+  const headacheRecs = recs.filter(isHeadacheRecord);
+  const headacheDays = new Set(headacheRecs.map((r) => r.date)).size;
+  const recordedDays = new Set(recs.map((r) => r.date)).size;
+  const totalDays = Math.round((new Date(`${endIso}T12:00:00`) - new Date(`${startIso}T12:00:00`)) / 86400000) + 1;
+  const medDays = new Set(headacheRecs.filter((r) => r.med).map((r) => r.date)).size;
   const sevCount = [0, 0, 0, 0];
-  recs.forEach((r) => sevCount[r.severity || 0]++);
-  const auraCount = recs.filter((r) => (r.symptoms || []).includes("前兆")).length;
-  const downCount = recs.filter((r) => r.impact === "寝込んだ").length;
+  headacheRecs.forEach((r) => sevCount[r.severity || 0]++);
+  const symptomCount = (...labels) => headacheRecs.filter((r) => labels.some((x) => (r.symptoms || []).includes(x))).length;
+  const auraCount = symptomCount("前兆", "前兆あり", "痛む前の見え方の変化");
+  const downCount = headacheRecs.filter((r) => r.impact === "寝込んだ").length;
+  const durationValues = headacheRecs.map((r) => r.durationMinutes).filter((n) => Number.isFinite(n) && n > 0);
+  const averageMinutes = durationValues.length ? Math.round(durationValues.reduce((a, b) => a + b, 0) / durationValues.length) : null;
+  const durationText = averageMinutes == null ? "未集計" : averageMinutes < 60 ? `入力された目安から平均約${averageMinutes}分` : `入力された目安から平均約${(averageMinutes / 60).toFixed(averageMinutes % 60 ? 1 : 0)}時間`;
+  const ongoingCount = headacheRecs.filter((r) => r.ongoing).length;
+  const skippedCount = headacheRecs.filter((r) => (r.skippedFields || []).length).length;
+  const safetyFlags = [...new Set(headacheRecs.flatMap((r) => r.safetyFlags || []))];
+  const monthStats = new Map();
+  recs.forEach((r) => {
+    const key = r.date.slice(0, 7);
+    const m = monthStats.get(key) || { recorded: new Set(), headache: new Set(), med: new Set() };
+    m.recorded.add(r.date);
+    if (isHeadacheRecord(r)) {
+      m.headache.add(r.date);
+      if (r.med) m.med.add(r.date);
+    }
+    monthStats.set(key, m);
+  });
 
   // 誘因の頻度
   const trigFreq = new Map();
-  recs.forEach((r) => (r.triggers || []).forEach((t) => trigFreq.set(t, (trigFreq.get(t) || 0) + 1)));
+  headacheRecs.forEach((r) => (r.triggers || []).forEach((t) => trigFreq.set(t, (trigFreq.get(t) || 0) + 1)));
   const trigTop = [...trigFreq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
   const trigMax = trigTop.length ? trigTop[0][1] : 1;
 
   const period = `${fmtDate(startIso)} 〜 ${fmtDate(endIso)}（過去${summaryMonths}ヶ月）`;
 
   let html = `
-    <h3 class="sum-head">頭痛ダイアリー まとめ ─ ${period}</h3>
+    <h3 class="sum-head">診察で先生に見せるメモ</h3>
+    <div class="doctor-note">
+      <p><strong>${period}</strong></p>
+      <p>${totalDays}日間のうち、${recordedDays}日を記録しました。頭痛があったのは${headacheDays}日、頭痛の薬を飲んだのは${medDays}日です。</p>
+      <p>強い頭痛は${sevCount[3]}回、寝込んだり休んだりしたのは${downCount}回でした。続いた時間は${durationText}${ongoingCount ? `、記録時にまだ続いていた頭痛が${ongoingCount}回` : ""}です。</p>
+      <p>ズキズキする痛み ${symptomCount("拍動性", "ズキズキする痛み")}回、動くと悪化 ${symptomCount("動くと悪化")}回、吐き気 ${symptomCount("吐き気", "吐き気あり")}回、実際に吐いた ${symptomCount("嘔吐あり", "実際に吐いた")}回、光がつらい ${symptomCount("光がつらい")}回、音がつらい ${symptomCount("音がつらい")}回、痛む前の見え方の変化 ${auraCount}回でした。</p>
+      ${safetyFlags.length ? `<p class="safety-note"><strong>早めの受診を案内した言葉：</strong>${escapeHtml(safetyFlags.join("、"))}</p>` : ""}
+      ${skippedCount ? `<p class="unknown-note">一部の質問を飛ばした記録が${skippedCount}件あります。空欄は「症状なし」ではなく「未確認」の場合があります。</p>` : ""}
+    </div>
     <div class="cal-stats">
+      <div class="stat"><div class="n">${recordedDays}<small> / ${totalDays}</small></div><div class="l">記録できた日</div></div>
       <div class="stat"><div class="n">${headacheDays}</div><div class="l">頭痛のあった日</div></div>
-      <div class="stat"><div class="n ${medDays >= 10 * summaryMonths ? "warn" : ""}">${medDays}</div><div class="l">薬を飲んだ日</div></div>
-      <div class="stat"><div class="n">${sevCount[3]}</div><div class="l">強い発作</div></div>
-      <div class="stat"><div class="n">${auraCount}</div><div class="l">前兆あり</div></div>
+      <div class="stat"><div class="n">${medDays}</div><div class="l">頭痛の薬を飲んだ日</div></div>
+      <div class="stat"><div class="n">${sevCount[3]}</div><div class="l">強い頭痛</div></div>
+      <div class="stat"><div class="n">${auraCount}</div><div class="l">痛む前の見え方の変化</div></div>
       <div class="stat"><div class="n">${downCount}</div><div class="l">寝込んだ回数</div></div>
     </div>`;
+
+  html += `<h3 class="sum-head">月ごとの日数</h3><div style="overflow-x:auto"><table class="sum-table monthly-table">
+    <tr><th>月</th><th>記録できた日</th><th>頭痛のあった日</th><th>頭痛の薬を飲んだ日</th></tr>` +
+    [...monthStats.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([month, m]) => {
+      const [y, mo] = month.split("-");
+      return `<tr><td>${Number(y)}年${Number(mo)}月</td><td class="c">${m.recorded.size}日</td><td class="c">${m.headache.size}日</td><td class="c">${m.med.size}日</td></tr>`;
+    }).join("") + `</table></div>`;
 
   if (trigTop.length) {
     html += `<h3 class="sum-head">よくあるきっかけ</h3>` + trigTop.map(([t, n]) =>
@@ -887,19 +1275,31 @@ function renderSummary() {
        <span class="bar" style="width:${Math.round((n / trigMax) * 200)}px"></span><span>${n}回</span></div>`).join("");
   }
 
+  const medFreq = new Map();
+  headacheRecs.filter((r) => r.med).forEach((r) => {
+    const item = medFreq.get(r.med) || { days: new Set(), count: 0, known: false };
+    item.days.add(r.date);
+    if (Number.isFinite(r.medCount)) { item.count += r.medCount; item.known = true; }
+    medFreq.set(r.med, item);
+  });
+  if (medFreq.size) {
+    html += `<h3 class="sum-head">使った頭痛の薬</h3><ul class="plain-list">` +
+      [...medFreq.entries()].map(([name, v]) => `<li>${escapeHtml(name)}：${v.days.size}日${v.known ? `、分かる範囲で合計${v.count}回分` : ""}</li>`).join("") + `</ul>`;
+  }
+
   html += `<h3 class="sum-head">記録一覧</h3>
     <div style="overflow-x:auto"><table class="sum-table">
-    <tr><th>日付</th><th>時間</th><th>強さ</th><th>場所</th><th>症状</th><th>きっかけ</th><th>薬→効果</th><th>影響</th><th>メモ</th></tr>` +
-    recs.map((r) => `<tr>
+    <tr><th>日付</th><th>始まった時間・続いた時間</th><th>強さ</th><th>場所</th><th>一緒に起きたこと</th><th>きっかけ</th><th>薬と効きめ</th><th>生活への影響</th><th>本人の言葉</th></tr>` +
+    recs.map((r) => !isHeadacheRecord(r) ? `<tr class="no-headache-row"><td class="c">${fmtDate(r.date)}</td><td colspan="8">頭痛なし</td></tr>` : `<tr>
       <td class="c">${fmtDate(r.date)}</td>
-      <td class="c">${escapeHtml(r.time || "")}</td>
-      <td class="c">${["", "△軽", "○中", "◎強"][r.severity] || ""}</td>
-      <td>${escapeHtml(r.location || "")}</td>
-      <td>${escapeHtml((r.symptoms || []).join("、"))}</td>
-      <td>${escapeHtml((r.triggers || []).join("、"))}</td>
-      <td>${escapeHtml(r.med ? `${r.med}→${r.medEffect || "?"}` : "")}</td>
-      <td class="c">${escapeHtml(r.impact || "")}</td>
-      <td>${escapeHtml(r.memo || "")}</td>
+      <td>${escapeHtml([r.time || `開始時刻は${emptyAnswerText(r, "time", "未入力")}`, r.duration || `続いた時間は${emptyAnswerText(r, "duration", "未入力")}`].join(" / "))}</td>
+      <td class="c">${["", "軽い", "中くらい", "強い"][r.severity] || "未確認"}</td>
+      <td>${escapeHtml(r.location || emptyAnswerText(r, "location", "未入力"))}</td>
+      <td>${escapeHtml(((r.symptoms || []).join("、") || (["quality", "movement", "aura", "nausea", "photophono"].every((k) => answered(r, k)) ? "どれもなし" : "未確認の項目あり")) + (r.auraDetail ? `（見え方の詳細: ${r.auraDetail}）` : ""))}</td>
+      <td>${escapeHtml((r.triggers || []).join("、") || emptyAnswerText(r, "triggers", "特になし"))}</td>
+      <td>${escapeHtml(r.med ? `${r.med}${r.medTiming ? `（${r.medTiming}）` : "（飲んだ時刻・回数は未確認）"}、${r.medEffect || "効きめは未確認"}` : emptyAnswerText(r, "med", "飲んでいない"))}</td>
+      <td class="c">${escapeHtml(r.impact || emptyAnswerText(r, "impact", "未入力"))}</td>
+      <td>${r.memoSummary ? `<b>短いまとめ：</b>${escapeHtml(r.memoSummary)}<br>` : ""}${r.narrativeRaw ? `<b>最初に話した内容：</b>${escapeHtml(r.narrativeRaw)}<br>` : ""}${r.memo ? `<b>追加で伝えたこと：</b>${escapeHtml(r.memo)}` : ""}</td>
     </tr>`).join("") + `</table></div>
     <p class="hint">このまとめは本人の記録から自動集計したものです（診断ではありません）。</p>`;
 
@@ -918,25 +1318,31 @@ function summaryRangeRecords() {
 }
 
 function buildQrText(recs, startIso, endIso, limit) {
-  const days = new Set(recs.map((r) => r.date)).size;
-  const medDays = new Set(recs.filter((r) => r.med).map((r) => r.date)).size;
-  const sev3 = recs.filter((r) => r.severity === 3).length;
+  const headacheRecs = recs.filter(isHeadacheRecord);
+  const days = new Set(headacheRecs.map((r) => r.date)).size;
+  const recordedDays = new Set(recs.map((r) => r.date)).size;
+  const medDays = new Set(headacheRecs.filter((r) => r.med).map((r) => r.date)).size;
+  const sev3 = headacheRecs.filter((r) => r.severity === 3).length;
   const trigFreq = new Map();
-  recs.forEach((r) => (r.triggers || []).forEach((t) => trigFreq.set(t, (trigFreq.get(t) || 0) + 1)));
+  headacheRecs.forEach((r) => (r.triggers || []).forEach((t) => trigFreq.set(t, (trigFreq.get(t) || 0) + 1)));
   const trigTop = [...trigFreq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)
     .map(([t, n]) => `${t}${n}`).join(" ");
 
   const lines = [
     `【頭痛ダイアリー】${startIso}〜${endIso}`,
-    `頭痛${days}日 服薬${medDays}日 強い発作${sev3}回`,
+    `記録${recordedDays}日 頭痛${days}日 服薬${medDays}日 強い頭痛${sev3}回`,
   ];
   if (trigTop) lines.push(`誘因: ${trigTop}`);
   lines.push(`─記録(新しい順)─`);
   const list = recs.slice(0, limit); // sortedRecords は新しい順
   for (const r of list) {
+    if (!isHeadacheRecord(r)) {
+      lines.push(`${r.date.slice(5)} 頭痛なし`);
+      continue;
+    }
     const sym = (r.symptoms || []).length ? " " + r.symptoms.join("・") : "";
-    const med = r.med ? ` 薬:${r.med}→${r.medEffect || "?"}` : "";
-    lines.push(`${r.date.slice(5)}${r.time || ""} ${["", "軽", "中", "強"][r.severity] || "?"} ${r.location || ""}${sym}${med}`);
+    const med = r.med ? ` 薬:${r.med}${r.medTiming ? `(${r.medTiming})` : ""} ${r.medEffect || "効きめ未確認"}` : "";
+    lines.push(`${r.date.slice(5)}${r.time || ""} ${["", "軽い", "中くらい", "強い"][r.severity] || "未確認"} ${r.location || ""} ${r.duration || ""}${sym}${med}`);
   }
   if (recs.length > limit) lines.push(`…ほか${recs.length - limit}件は紙・画面で`);
   return { text: lines.join("\n"), shown: list.length };
@@ -1003,7 +1409,7 @@ function importJson(file) {
       const existing = new Set(state.records.map((r) => r.id));
       let added = 0;
       for (const r of data.records) {
-        if (!existing.has(r.id)) { state.records.push(r); added++; }
+        if (!existing.has(r.id)) { state.records.push(normalizeRecord(r)); added++; }
       }
       save();
       renderRecent(); renderCalendar(); renderSummary();
@@ -1025,20 +1431,28 @@ function insertSample() {
     const hasMed = sev >= 2 || i % 4 === 0;
     state.records.push({
       id: newId() + i,
+      entryType: "headache",
       date: todayStr(-i),
       time: times[i % times.length],
+      duration: ["1〜3時間", "4〜12時間", "半日以上"][i % 3],
+      durationMinutes: [120, 480, 720][i % 3],
+      ongoing: false,
       severity: sev,
       location: locs[i % locs.length],
       symptoms: [
-        ...(sev >= 2 ? ["拍動性"] : []),
-        ...(i % 7 === 0 ? ["前兆"] : []),
-        ...(sev === 3 ? ["吐き気", "光がつらい"] : []),
+        ...(sev >= 2 ? ["ズキズキする痛み", "動くと悪化"] : ["締めつける痛み"]),
+        ...(i % 7 === 0 ? ["痛む前の見え方の変化"] : []),
+        ...(sev === 3 ? ["吐き気あり", "光がつらい"] : []),
       ],
       triggers: trigPool[i % trigPool.length],
       med: hasMed ? (i % 3 === 0 ? "スマトリプタン" : "ロキソニン") : "",
+      medTiming: hasMed ? "始まって30分ほどで1回分" : "",
+      medCount: hasMed ? 1 : null,
       medEffect: hasMed ? ["よく効いた", "少し効いた", "効かなかった"][i % 3] : "",
       impact: ["普段どおり", "支障あり", "寝込んだ"][sev - 1],
       memo: i % 11 === 0 ? "会議中に悪化した" : "",
+      answeredFields: ["time", "duration", "severity", "location", "quality", "movement", "aura", "nausea", "photophono", "triggers", "med", "medTiming", "medEffect", "impact"],
+      skippedFields: [], safetyFlags: [],
       source: i % 2 ? "voice" : "form",
       createdAt: Date.now() - i * 86400000,
     });
@@ -1101,6 +1515,14 @@ function init() {
   });
   renderSound();
 
+  const aiToggle = $("ai-summary-on");
+  aiToggle.checked = !!state.settings.aiSummaryOn;
+  aiToggle.addEventListener("change", () => {
+    state.settings.aiSummaryOn = aiToggle.checked;
+    save();
+    toast(aiToggle.checked ? "AIによる短いまとめを有効にしました" : "メモは端末内だけに保存します");
+  });
+
   // 記録モード切替
   $("mode-voice").addEventListener("click", () => {
     $("mode-voice").classList.add("on"); $("mode-form").classList.remove("on");
@@ -1114,6 +1536,7 @@ function init() {
 
   // 問診
   $("btn-start-interview").addEventListener("click", startInterview);
+  $("btn-no-headache").addEventListener("click", () => saveNoHeadache());
   $("q-repeat").addEventListener("click", () => askCurrent(false));
   $("q-skip").addEventListener("click", skipCurrent);
   $("q-abort").addEventListener("click", () => abortInterview(false));

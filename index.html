@@ -23,7 +23,7 @@
     </div>
 
     <div>
-      <div class="nav-title">Views</div>
+      <div class="nav-title">メニュー</div>
       <div class="cats">
         <button class="cat-row active" data-view="record">
           <span class="num">01</span><span class="name">記録する</span><span class="count" id="nav-count"></span>
@@ -32,7 +32,7 @@
           <span class="num">02</span><span class="name">カレンダー</span>
         </button>
         <button class="cat-row" data-view="summary">
-          <span class="num">03</span><span class="name">受診サマリー</span>
+          <span class="num">03</span><span class="name">受診メモ</span>
         </button>
       </div>
     </div>
@@ -46,15 +46,15 @@
     <div id="view-record" class="view">
       <header class="masthead">
         <div>
-          <div class="eyebrow">01 / Record</div>
+          <div class="eyebrow">記録する</div>
           <h2>きょうの<em>頭痛</em>を記録する</h2>
         </div>
-        <div class="meta"><b id="meta-count">0</b> entries<br><span id="meta-today"></span></div>
+        <div class="meta"><b id="meta-count">0</b> 件の記録<br><span id="meta-today"></span></div>
       </header>
 
       <section class="section">
         <div class="sec-head">
-          <span class="pre">Interview</span>
+          <span class="pre">声または文字で</span>
           <h3>問診</h3>
           <div class="aux">
             <button id="btn-sound" class="sound-toggle" title="読み上げのON/OFF">🔊 音声ON</button>
@@ -71,10 +71,14 @@
             <p class="lead">アプリが順番に質問します。声で答えると、自動で記録が埋まります。
             マイクが使えないときも、ボタンや文字入力でそのまま進めます。</p>
             <button id="btn-start-interview" class="cta">🎤 問診をはじめる</button>
+            <button id="btn-no-headache" class="cta secondary">きょうは頭痛なし</button>
             <p class="hint">Chrome推奨。マイクの許可を求められたら「許可」を押してください。</p>
+            <label class="privacy-choice"><input type="checkbox" id="ai-summary-on"> 長いメモをAIで短くまとめるために送信する</label>
+            <p class="hint">選ばない場合、メモは端末内だけに保存されます。本人の言葉は要約後も必ず残ります。</p>
           </div>
 
           <div id="interview-live" class="hidden">
+            <div id="safety-alert" class="safety-alert hidden" role="alert"></div>
             <div class="q-card">
               <div class="q-progress" id="q-progress">Q 1 / 12</div>
               <p class="q-text" id="q-text"></p>
@@ -96,8 +100,9 @@
           </div>
 
           <div id="interview-confirm" class="hidden">
+            <div id="confirm-safety" class="safety-alert hidden" role="alert"></div>
             <div class="sec-head" style="border-bottom:0;margin-bottom:0;padding-bottom:0">
-              <span class="pre">Saved</span>
+              <span class="pre">保存しました</span>
               <h3>✅ 記録しました</h3>
             </div>
             <dl class="confirm-list" id="confirm-list"></dl>
@@ -123,15 +128,25 @@
               </label>
             </div>
 
-            <fieldset><legend>Severity ─ 痛みの強さ</legend>
+            <fieldset><legend>痛みの強さ</legend>
               <div class="chips" id="f-severity">
-                <button type="button" data-v="1">△ 軽い（仕事・家事はできる）</button>
-                <button type="button" data-v="2">○ 中くらい（つらいが動ける）</button>
-                <button type="button" data-v="3">◎ 強い（寝込む・動けない）</button>
+                <button type="button" data-v="1">軽い（仕事・家事はできる）</button>
+                <button type="button" data-v="2">中くらい（つらいが動ける）</button>
+                <button type="button" data-v="3">強い（寝込む・動けない）</button>
               </div>
             </fieldset>
 
-            <fieldset><legend>Location ─ 痛む場所</legend>
+            <div class="grid2">
+              <label>どれくらい続いたか
+                <select id="f-duration">
+                  <option value="">未入力</option><option>30分くらい</option><option>1〜3時間</option>
+                  <option>4〜12時間</option><option>半日以上</option><option>1日以上</option><option>まだ続いている</option>
+                </select>
+              </label>
+              <label>ほかの言い方で記録する <input type="text" id="f-duration-free" placeholder="例: 2時間半、3日間"></label>
+            </div>
+
+            <fieldset><legend>痛む場所</legend>
               <div class="chips" id="f-location">
                 <button type="button" data-v="右側">右側</button>
                 <button type="button" data-v="左側">左側</button>
@@ -143,18 +158,25 @@
               </div>
             </fieldset>
 
-            <fieldset><legend>Symptoms ─ 症状（あてはまるもの全部）</legend>
+            <fieldset><legend>一緒に起きたこと（あてはまるもの全部）</legend>
               <div class="chips" id="f-symptoms">
-                <button type="button" data-v="拍動性">ズキンズキン脈打つ</button>
-                <button type="button" data-v="前兆">前兆（ギザギザの光など）</button>
-                <button type="button" data-v="吐き気">吐き気・嘔吐</button>
+                <button type="button" data-v="ズキズキする痛み">ズキズキする</button>
+                <button type="button" data-v="締めつける痛み">締めつけられる</button>
+                <button type="button" data-v="痛む前の見え方の変化">痛む前にギザギザの光などが見えた</button>
+                <button type="button" data-v="吐き気あり">吐き気があった</button>
+                <button type="button" data-v="実際に吐いた">実際に吐いた</button>
                 <button type="button" data-v="光がつらい">光がつらい</button>
                 <button type="button" data-v="音がつらい">音がつらい</button>
                 <button type="button" data-v="動くと悪化">動くと悪化する</button>
+                <button type="button" data-v="症状なし" data-none="true">どれもなかった</button>
               </div>
             </fieldset>
 
-            <fieldset><legend>Triggers ─ 思い当たるきっかけ</legend>
+            <label>痛む前の見え方について（あった場合）
+              <input type="text" id="f-aura-detail" placeholder="例: ギザギザが広がって20分くらい続いた">
+            </label>
+
+            <fieldset><legend>思い当たるきっかけ</legend>
               <div class="chips" id="f-triggers">
                 <button type="button" data-v="寝不足">寝不足</button>
                 <button type="button" data-v="寝すぎ">寝すぎ</button>
@@ -164,11 +186,13 @@
                 <button type="button" data-v="肩こり">肩こり・首こり</button>
                 <button type="button" data-v="アルコール">アルコール</button>
                 <button type="button" data-v="人混み・光・匂い">人混み・光・匂い</button>
+                <button type="button" data-v="特になし" data-none="true">特にない</button>
               </div>
             </fieldset>
 
             <div class="grid2">
-              <label>飲んだ薬（名前） <input type="text" id="f-med" placeholder="例: ロキソニン、○○トリプタン"></label>
+              <label>頭痛が起きたときに飲んだ薬（名前） <input type="text" id="f-med" placeholder="例: ロキソニン、○○トリプタン"></label>
+              <label>いつ、何回分飲んだか <input type="text" id="f-medtiming" placeholder="例: 始まって30分で1錠、2時間後にもう1錠"></label>
               <label>薬の効きめ
                 <select id="f-medeffect">
                   <option value="">─</option>
@@ -176,8 +200,9 @@
                 </select>
               </label>
             </div>
+            <label class="privacy-choice"><input type="checkbox" id="f-no-med"> 頭痛の薬は飲んでいない</label>
 
-            <fieldset><legend>Impact ─ 生活への影響</legend>
+            <fieldset><legend>生活への影響</legend>
               <div class="chips" id="f-impact">
                 <button type="button" data-v="普段どおり">普段どおり過ごせた</button>
                 <button type="button" data-v="支障あり">支障があった</button>
@@ -194,7 +219,7 @@
 
       <section class="section">
         <div class="sec-head">
-          <span class="pre">Recent</span>
+          <span class="pre">直近の記録</span>
           <h3>最近の記録</h3>
         </div>
         <div id="recent-list" class="entry-list"></div>
@@ -205,7 +230,7 @@
         <div class="caution-legend">
           <div>MIC ─ 音声問診は Chrome 推奨</div>
           <div>DATA ─ 記録はこの端末内にのみ保存</div>
-          <div>AI ─ 長いメモのみ要約のため送信（サーバーには保存されません）</div>
+          <div>AI ─ 本人が許可した場合だけ、長いメモを短くまとめるために送信</div>
         </div>
       </div>
     </div>
@@ -214,7 +239,7 @@
     <div id="view-calendar" class="view hidden">
       <header class="masthead">
         <div>
-          <div class="eyebrow">02 / Calendar</div>
+          <div class="eyebrow">カレンダー</div>
           <h2 id="cal-title">─</h2>
         </div>
         <div class="meta">
@@ -232,6 +257,7 @@
           <span><i class="sq sev2"></i>中くらい</span>
           <span><i class="sq sev3"></i>強い</span>
           <span>💊 = 薬を飲んだ日</span>
+          <span>✓ = 頭痛がなかったと記録した日</span>
         </div>
         <div id="cal-grid" class="cal-grid"></div>
         <div id="cal-stats" class="cal-stats"></div>
@@ -239,12 +265,12 @@
       </section>
     </div>
 
-    <!-- ===== 03 受診サマリー ===== -->
+    <!-- ===== 03 受診メモ ===== -->
     <div id="view-summary" class="view hidden">
       <header class="masthead">
         <div>
-          <div class="eyebrow">03 / Summary</div>
-          <h2>受診用<em>サマリー</em></h2>
+          <div class="eyebrow">受診の準備</div>
+          <h2>先生に見せる<em>受診メモ</em></h2>
         </div>
         <div class="meta">
           <div class="seg">

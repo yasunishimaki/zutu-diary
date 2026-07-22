@@ -155,6 +155,10 @@ body::before{
   transition:all .15s;
 }
 .cta:hover{background:var(--accent);border-color:var(--accent)}
+.cta.secondary{margin-top:10px;background:transparent;color:var(--ink);border-color:var(--rule-2);font-size:15px;padding:13px 20px}
+.cta.secondary:hover{background:var(--paper-2);border-color:var(--ink)}
+.privacy-choice{display:flex;gap:8px;align-items:flex-start;margin-top:18px;font-size:12.5px;line-height:1.6;color:var(--ink-2)}
+.privacy-choice input{margin-top:4px}
 
 .seg{display:inline-flex;border:1px solid var(--rule-2);border-radius:2px;overflow:hidden}
 .seg button{padding:7px 12px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;
@@ -167,6 +171,9 @@ body::before{
   border:1px solid var(--rule-2);border-radius:2px;background:rgba(255,255,255,.4);
   padding:30px 26px;text-align:center;box-shadow:var(--shadow);
 }
+.safety-alert{background:#fff3ef;border:2px solid var(--accent);padding:16px 18px;margin-bottom:14px;font-size:14px;line-height:1.8}
+.safety-alert strong{display:block;color:var(--accent);font-family:var(--serif);font-size:17px}
+.safety-alert p{margin:4px 0 0}
 .q-progress{font-family:var(--mono);font-size:10px;letter-spacing:.22em;
   text-transform:uppercase;color:var(--ink-3)}
 .q-text{font-family:var(--serif);font-size:24px;font-weight:600;line-height:1.55;margin:16px 0}
@@ -269,6 +276,8 @@ legend{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transf
 .cal-cell.sev1{background:color-mix(in srgb,var(--sev1) 30%,#fff)}
 .cal-cell.sev2{background:color-mix(in srgb,var(--sev2) 38%,#fff)}
 .cal-cell.sev3{background:color-mix(in srgb,var(--sev3) 45%,#fff)}
+.cal-cell.no-headache{background:rgba(255,255,255,.7)}
+.cal-cell .no-headache-mark{position:absolute;inset:auto 5px 4px auto;color:#4f7561;font-weight:700;font-size:12px}
 .cal-cell .med{position:absolute;bottom:3px;right:4px;font-size:10px}
 .cal-cell.selected{outline:2px solid var(--accent);outline-offset:-1px}
 
@@ -276,6 +285,7 @@ legend{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transf
 .stat{flex:1;min-width:120px;background:rgba(255,255,255,.4);padding:16px 12px;text-align:center}
 .stat + .stat{border-left:1px solid var(--rule)}
 .stat .n{font-family:var(--serif);font-size:30px;font-weight:600;line-height:1}
+.stat .n small{font-size:14px;color:var(--ink-3);font-weight:400}
 .stat .n.warn{color:var(--accent)}
 .stat .l{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;color:var(--ink-3);
   margin-top:8px;text-transform:uppercase}
@@ -286,6 +296,12 @@ legend{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transf
 /* ===== 受診サマリー ===== */
 .sum-head{font-family:var(--serif);font-size:18px;font-weight:600;margin:28px 0 12px;
   padding-bottom:8px;border-bottom:1px solid var(--rule)}
+.doctor-note{border:1px solid var(--rule-2);border-left:4px solid var(--accent);background:rgba(255,255,255,.55);padding:16px 20px;font-size:14px;line-height:1.9}
+.doctor-note p{margin:5px 0}
+.doctor-note .unknown-note{color:var(--accent);font-size:12.5px}
+.doctor-note .safety-note{background:#fff3ef;border:1px solid var(--accent);padding:8px 10px;color:var(--accent)}
+.plain-list{font-size:13.5px;line-height:1.9;padding-left:1.4em}
+.no-headache-row td{background:rgba(255,255,255,.6);color:var(--ink-3)}
 .sum-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:4px}
 .sum-table th,.sum-table td{border:1px solid var(--rule);padding:6px 8px;text-align:left;vertical-align:top}
 .sum-table th{background:var(--paper-2);font-family:var(--mono);font-size:10px;
