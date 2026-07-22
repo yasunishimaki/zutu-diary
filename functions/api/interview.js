@@ -85,6 +85,11 @@ export async function onRequestPost({ request, env }) {
   if (!content) return json({ error: "empty" }, 502);
   try {
     const parsed = JSON.parse(content);
+    const answeredFields = Array.isArray(parsed.answeredFields)
+      ? parsed.answeredFields.filter((key) => QUESTION_KEYS.has(key)) : [];
+    // understood は「現在の質問に答えられた」の意味なので、モデルの内部名の揺れを吸収する。
+    if (parsed.understood === true && !answeredFields.includes(questionKey)) answeredFields.push(questionKey);
+    parsed.answeredFields = answeredFields;
     return json(parsed);
   } catch (_) {
     return json({ error: "invalid_response" }, 502);

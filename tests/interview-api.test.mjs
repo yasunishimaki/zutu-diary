@@ -31,7 +31,7 @@ globalThis.fetch = async (_url, options) => {
       understood: true,
       answerSummary: "頭痛なし",
       acknowledgement: "今日は頭痛がなかったのですね。",
-      answeredFields: ["hasHeadache"],
+      answeredFields: ["entryType"],
       fields: { entryType: "noHeadache" },
     }) } }],
   }), { status: 200, headers: { "content-type": "application/json" } });
@@ -45,6 +45,7 @@ try {
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.fields.entryType, "noHeadache");
+  assert.deepEqual(body.answeredFields, ["hasHeadache"]);
 } finally {
   globalThis.fetch = originalFetch;
 }
