@@ -82,6 +82,7 @@ try {
   assert.ok(body.answeredFields.includes("nausea"));
   assert.ok(body.answeredFields.includes("med"));
   assert.ok(body.answeredFields.includes("medEffect"));
+  assert.ok(!body.answeredFields.includes("triggers"));
   assert.ok(!body.answeredFields.includes("duration"));
   assert.ok(!body.answeredFields.includes("severity"));
   assert.ok(!body.answeredFields.includes("impact"));

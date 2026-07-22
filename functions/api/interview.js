@@ -70,7 +70,8 @@ function evidenceFor(key, fields, text, currentQuestionKey) {
   if (key === "auraDetail") return typeof fields.auraDetail === "string" && !!fields.auraDetail.trim();
   if (key === "nausea") return symptoms.some((x) => ["吐き気あり", "実際に吐いた"].includes(x)) || /(?:吐き気|むかむか).{0,10}(?:ない|なかった|ありません)/.test(text);
   if (key === "photophono") return symptoms.some((x) => ["光がつらい", "音がつらい"].includes(x)) || /(?:光|音).{0,14}(?:平気|気になら|つらくない)/.test(text);
-  if (key === "triggers") return (Array.isArray(fields.triggers) && fields.triggers.length > 0) || /(?:きっかけ|思い当たること).{0,10}(?:ない|なし|ありません)/.test(text);
+  if (key === "triggers") return /寝不足|睡眠不足|寝すぎ|寝過ぎ|天気|低気圧|台風|生理|月経|ストレス|疲れ|緊張|肩こり|首こり|お酒|アルコール|人混み|匂い|におい|スマホ|パソコン|画面|空腹/.test(text)
+    || /(?:きっかけ|思い当たること).{0,10}(?:ない|なし|ありません)/.test(text);
   if (key === "med") return typeof fields.medTaken === "boolean" || (typeof fields.med === "string" && !!fields.med.trim());
   if (key === "medTiming") return (typeof fields.medTiming === "string" && !!fields.medTiming.trim()) || Number.isFinite(fields.medCount);
   if (key === "medEffect") return ["よく効いた", "少し効いた", "効かなかった", "まだ不明"].includes(fields.medEffect);
@@ -120,6 +121,11 @@ export async function onRequestPost({ request, env }) {
     if (/一昨日/.test(text)) fields.dateOffset = -2;
     else if (/昨日/.test(text)) fields.dateOffset = -1;
     else if (/今日|きょう/.test(text)) fields.dateOffset = 0;
+    if (!Array.isArray(fields.symptoms)) fields.symptoms = [];
+    const addSymptom = (name) => { if (!fields.symptoms.includes(name)) fields.symptoms.push(name); };
+    if (/ズキズキ|脈打/.test(text)) addSymptom("ズキズキする痛み");
+    if (/(?:歩|動|階段).{0,12}(?:ひど|悪化|強く|つらく)/.test(text)) addSymptom("動くと悪化");
+    if (/吐き気|むかむか/.test(text) && !/(?:吐き気|むかむか).{0,8}(?:ない|なかった|ありません)/.test(text)) addSymptom("吐き気あり");
     parsed.fields = fields;
     // モデルが一覧へ載せ忘れても、検証済みの値から回答済み項目を再構成する。
     const answeredFields = [...QUESTION_KEYS].filter((key) => evidenceFor(key, fields, text, questionKey));
