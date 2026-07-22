@@ -1091,7 +1091,7 @@ function init() {
   // 音声ON/OFF
   const soundBtn = $("btn-sound");
   const renderSound = () => {
-    soundBtn.textContent = state.settings.soundOn ? "🔊 音声ON" : "🔇 音声OFF";
+    soundBtn.textContent = state.settings.soundOn ? "🔊 質問を読み上げ" : "🔇 読み上げオフ";
     soundBtn.classList.toggle("off", !state.settings.soundOn);
   };
   soundBtn.addEventListener("click", () => {
