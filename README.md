@@ -40,7 +40,8 @@
 
 静的ファイルのみなのでビルド不要。患者用・受付用を別プロジェクトとして配信している。
 
-- **患者用**: https://zutsu-diary.pages.dev/ （index.html + styles.css + app.js）
+- **患者用（main版）**: https://zutsu-diary.pages.dev/
+- **患者用（Codex版）**: https://zutsu-diary-2.pages.dev/ （index.html + styles.css + app.js + functions）
 - **受付用**: https://zutsu-reception.pages.dev/ （reception.html を index.html として + styles.css）
 
 更新手順:
@@ -50,11 +51,12 @@ npx wrangler login   # 初回のみ
 mkdir -p dist-patient dist-reception
 cp index.html styles.css app.js dist-patient/
 cp reception.html dist-reception/index.html && cp styles.css dist-reception/
-npx wrangler pages deploy dist-patient   --project-name=zutsu-diary     --branch=main --commit-dirty=true
+npx wrangler pages deploy dist-patient   --project-name=zutsu-diary-2   --branch=Codex
 npx wrangler pages deploy dist-reception --project-name=zutsu-reception --branch=main --commit-dirty=true
 ```
 
-`--branch=main` を付けないとプレビュー配信になるので注意。
+`zutsu-diary-2`の本番ブランチは`Codex`。患者用はリポジトリ直下から実行し、`functions`も一緒にアップロードする。
+受付用には要約APIが不要なので、受付用だけを更新するときは`dist-reception`内からデプロイする。
 カメラ（QR読み取り）とマイク（音声問診）は HTTPS が必要 → pages.dev はHTTPSなのでそのまま動く。
 
 ## 設計原則（ココマデから継承）
