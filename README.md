@@ -7,7 +7,7 @@
 
 1. **音声問診** — 最初に普段の言葉で自由に話すと内容を整理し、不足している大切な項目だけを追加で質問する（頭が痛いときに画面を注視しなくていい）
 2. **月間カレンダー** — 頭痛の日が強さの色で一目でわかる。薬を飲んだ日には💊マーク
-3. **受診メモ** — 頭痛日数・服薬日数・よくあるきっかけを自動集計。**印刷して渡す**ほかに、**QRコードを受付で読み取ってもらう**こともできる（紙の受診メモと同じ内容を圧縮し、長い場合は複数のQRに分ける）
+3. **受診メモ** — 頭痛日数・服薬日数・よくあるきっかけを自動集計。**印刷して渡す**ほかに、**QRコードを受付で読み取ってもらう**こともできる（全記録を圧縮し、長い場合は複数のQRに分ける）
 
 ## 使い方
 
@@ -35,8 +35,8 @@
 |---|---|
 | `index.html` | 【患者用】記録（音声問診/フォーム）・カレンダー・受診メモの3画面 |
 | `reception.html` | 【受付用】QRリーダー。カメラで読み取り→表示→印刷。保存・送信はしない |
-| `reception-v2.js` | 複数QRの順次読み取り・整合性確認・受診メモの復元 |
-| `summary-shared.js` | 患者用と受付用で共用する受診メモ表示。紙と受付画面の内容を揃える |
+| `reception-v2.js` | 複数QRの順次読み取り・整合性確認・全記録の復元・医師向け文章メモの表示 |
+| `summary-shared.js` | 患者用の受診メモ表示 |
 | `styles.css` | 和紙×明朝のペーパーデザイン（就活ノート系譜）・印刷用CSS |
 | `app.js` | 問診エンジン・AI出力の検証・ローカル解析・集計・音声入出力（Web Speech API） |
 | `functions/api/interview.js` | 【サーバー】自然な回答をStructured Outputsで記録項目へ変換する問診API |
@@ -50,7 +50,7 @@
 
 - **患者用（main版）**: https://zutsu-diary.pages.dev/
 - **患者用（Codex版）**: https://zutsu-diary-2.pages.dev/ （index.html + styles.css + app.js + functions）
-- **頭痛ダイアリー2 受付用**: https://zutsu-reception-2.pages.dev/ （紙の受診メモと同内容を復元・印刷）
+- **頭痛ダイアリー2 受付用**: https://zutsu-reception-2.pages.dev/ （全記録を簡潔な医師向け文章に復元・印刷）
 - **旧受付用**: https://zutsu-reception.pages.dev/
 
 更新手順:
@@ -60,7 +60,7 @@ npx wrangler login   # 初回のみ
 mkdir -p dist-patient dist-reception-2
 cp index.html styles.css app.js summary-shared.js dist-patient/
 cp reception.html dist-reception-2/index.html
-cp styles.css summary-shared.js reception-v2.js dist-reception-2/
+cp styles.css reception-v2.js dist-reception-2/
 npx wrangler pages deploy dist-patient   --project-name=zutsu-diary-2   --branch=Codex
 cd dist-reception-2
 npx wrangler pages deploy . --project-name=zutsu-reception-2 --branch=Codex --commit-dirty=true
@@ -75,7 +75,7 @@ npx wrangler pages deploy . --project-name=zutsu-reception-2 --branch=Codex --co
 - QRには選択期間の集計と全記録を含め、件数を省略しない
 - 内容をJSON化してgzip圧縮し、1枚に収まらない場合は番号つきの複数QRへ分割する
 - 受付用アプリがすべてのQRを端末内で結合し、チェックサムを確認してから表示する
-- 表示には患者用と同じ`summary-shared.js`を使うため、受付画面・受付での印刷・患者側の紙のメモが同じ内容になる
+- 受付では統計カード・グラフ・横長表を使わず、期間の要約と日ごとの記録を簡潔な文章で表示する
 - QRの内容をサーバーへ送信せず、ブラウザを閉じると受付画面から消える
 
 ## 設計原則（ココマデから継承）

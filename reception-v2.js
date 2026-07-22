@@ -139,6 +139,73 @@ function validatePayload(payload) {
   return { ...payload, records };
 }
 
+function formatDate(iso) {
+  const [year, month, day] = String(iso).split("-").map(Number);
+  const weekday = "日月火水木金土"[new Date(year, month - 1, day).getDay()];
+  return `${year}/${month}/${day}(${weekday})`;
+}
+
+function renderDoctorMemo(payload) {
+  const records = payload.records;
+  const headaches = records.filter((record) => record.entryType !== "noHeadache");
+  const recordedDays = new Set(records.map((record) => record.date)).size;
+  const headacheDays = new Set(headaches.map((record) => record.date)).size;
+  const medicineDays = new Set(headaches.filter((record) => record.med).map((record) => record.date)).size;
+  const severeCount = headaches.filter((record) => record.severity === 3).length;
+  const downCount = headaches.filter((record) => record.impact === "寝込んだ").length;
+  const safetyFlags = [...new Set(headaches.flatMap((record) => record.safetyFlags))];
+
+  const triggers = new Map();
+  headaches.forEach((record) => record.triggers.forEach((trigger) => triggers.set(trigger, (triggers.get(trigger) || 0) + 1)));
+  const triggerText = [...triggers.entries()].sort((a, b) => b[1] - a[1])
+    .map(([trigger, count]) => `${trigger} ${count}回`).join("、") || "特になし・未確認";
+
+  const medicines = new Map();
+  headaches.filter((record) => record.med).forEach((record) => {
+    const item = medicines.get(record.med) || { days: new Set(), count: 0, countKnown: false };
+    item.days.add(record.date);
+    if (Number.isFinite(record.medCount)) { item.count += record.medCount; item.countKnown = true; }
+    medicines.set(record.med, item);
+  });
+  const medicineText = [...medicines.entries()].map(([name, item]) =>
+    `${name} ${item.days.size}日${item.countKnown ? `・計${item.count}回分` : ""}`).join("、") || "なし・未確認";
+
+  const recordHtml = records.map((record) => {
+    if (record.entryType === "noHeadache") {
+      return `<div class="doctor-record"><b>${escapeHtml(formatDate(record.date))}</b>　頭痛なし</div>`;
+    }
+    const severity = ["未確認", "軽い", "中くらい", "強い"][record.severity || 0];
+    const when = [record.time, record.duration, record.ongoing ? "記録時も継続中" : ""].filter(Boolean).join("／") || "時刻・持続時間は未確認";
+    const symptoms = [...record.symptoms, record.auraDetail ? `見え方の詳細：${record.auraDetail}` : ""].filter(Boolean).join("、") || "なし・未確認";
+    const trigger = record.triggers.join("、") || "特になし・未確認";
+    const medicine = record.med
+      ? `${record.med}${record.medTiming ? `（${record.medTiming}）` : ""}${record.medEffect ? ` → ${record.medEffect}` : ""}`
+      : "飲んでいない・未確認";
+    const spoken = record.memoSummary || record.memo;
+    return `<div class="doctor-record">
+      <b>${escapeHtml(formatDate(record.date))}　${escapeHtml(severity)}</b>
+      <p>${escapeHtml(when)}／場所：${escapeHtml(record.location || "未確認")}</p>
+      <p>症状：${escapeHtml(symptoms)}</p>
+      <p>きっかけ：${escapeHtml(trigger)}／薬：${escapeHtml(medicine)}／生活への影響：${escapeHtml(record.impact || "未確認")}</p>
+      ${spoken ? `<p><strong>先生に伝えたいこと：</strong>${escapeHtml(spoken)}</p>` : ""}
+      ${record.narrativeRaw ? `<p><strong>記録時に話したこと：</strong>${escapeHtml(record.narrativeRaw)}</p>` : ""}
+    </div>`;
+  }).join("");
+
+  return `<article class="doctor-text-report">
+    <h2>頭痛ダイアリー2　受診メモ</h2>
+    <p class="doctor-period">${escapeHtml(formatDate(payload.startIso))} 〜 ${escapeHtml(formatDate(payload.endIso))}（過去${payload.summaryMonths}ヶ月）</p>
+    <section class="doctor-summary">
+      <p><strong>記録：</strong>${recordedDays}日　<strong>頭痛：</strong>${headacheDays}日　<strong>服薬：</strong>${medicineDays}日　<strong>強い頭痛：</strong>${severeCount}回　<strong>寝込んだ：</strong>${downCount}回</p>
+      <p><strong>よくあるきっかけ：</strong>${escapeHtml(triggerText)}</p>
+      <p><strong>使った頭痛の薬：</strong>${escapeHtml(medicineText)}</p>
+      ${safetyFlags.length ? `<p class="doctor-warning"><strong>早めの受診を案内した言葉：</strong>${escapeHtml(safetyFlags.join("、"))}</p>` : ""}
+    </section>
+    <h3>日ごとの記録</h3>${recordHtml}
+    <p class="doctor-disclaimer">本人の記録を整理したメモです。診断結果ではありません。</p>
+  </article>`;
+}
+
 function updateProgress(message) {
   const received = transfer ? transfer.parts.filter(Boolean).length : 0;
   const box = $("transfer-progress");
@@ -178,10 +245,7 @@ async function handleScannedData(text) {
 
   try {
     const payload = validatePayload(await decodePayload(transfer.parts.join(""), transfer.codec, transfer.id));
-    $("result-card").innerHTML = window.ZutsuSummary.render({
-      records: payload.records, startIso: payload.startIso, endIso: payload.endIso,
-      summaryMonths: payload.summaryMonths,
-    });
+    $("result-card").innerHTML = renderDoctorMemo(payload);
     $("result-time").textContent = new Date().toLocaleString("ja-JP");
     show("scan-result");
   } catch (_) {
@@ -191,7 +255,7 @@ async function handleScannedData(text) {
   }
 }
 
-window.ZutsuReception = { parsePart, decodePayload, validatePayload };
+window.ZutsuReception = { parsePart, decodePayload, validatePayload, renderDoctorMemo };
 
 $("btn-scan").addEventListener("click", startScan);
 $("btn-stop").addEventListener("click", () => { stopScan(); show("scan-idle"); });

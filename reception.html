@@ -25,12 +25,26 @@
     font-family:var(--sans);font-size:14px;line-height:2;white-space:pre-wrap;word-break:break-word}
   .result-card .head{font-family:var(--serif);font-size:18px;font-weight:600;
     padding-bottom:10px;margin-bottom:12px;border-bottom:2px solid var(--ink);white-space:normal}
+  .doctor-text-report{white-space:normal;word-break:normal}
+  .doctor-text-report h2{font-family:var(--serif);font-size:22px;margin:0;border-bottom:2px solid var(--ink);padding-bottom:8px}
+  .doctor-text-report h3{font-family:var(--serif);font-size:16px;margin:24px 0 8px;border-bottom:1px solid var(--rule);padding-bottom:5px}
+  .doctor-period{margin:8px 0 16px;color:var(--ink-2)}
+  .doctor-summary{border-left:3px solid var(--ink);padding:6px 0 6px 14px}
+  .doctor-summary p,.doctor-record p{margin:2px 0}
+  .doctor-warning{color:var(--accent);font-weight:600}
+  .doctor-record{border-bottom:1px solid var(--rule);padding:10px 2px;break-inside:avoid;page-break-inside:avoid}
+  .doctor-record> b{font-family:var(--serif);font-size:14px}
+  .doctor-disclaimer{font-size:11px;color:var(--ink-3);margin-top:20px}
   .paste-box{margin-top:26px;padding-top:18px;border-top:1px solid var(--rule)}
   .paste-box textarea{width:100%;margin-top:8px;padding:10px 12px;border:1px solid var(--rule-2);
     border-radius:2px;background:var(--paper);font:13px var(--sans);color:var(--ink)}
   @media print{
     .rec-shell{max-width:100%;padding:0}
     .result-card{border:0;box-shadow:none;padding:0}
+    .doctor-text-report{font-size:11px;line-height:1.65}
+    .doctor-text-report h2{font-size:18px}
+    .doctor-text-report h3{font-size:14px;margin-top:16px}
+    .doctor-record{padding:7px 0}
   }
 </style>
 </head>
@@ -182,7 +196,6 @@ $("btn-paste").addEventListener("click", () => {
 });
 window.addEventListener("pagehide", stopScan);
 </script>
-<script src="summary-shared.js"></script>
 <script src="reception-v2.js"></script>
 </body>
 </html>
