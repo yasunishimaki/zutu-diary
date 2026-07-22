@@ -25,7 +25,11 @@ const originalFetch = globalThis.fetch;
 globalThis.fetch = async (_url, options) => {
   assert.equal(options.headers.authorization, "Bearer test-key");
   const payload = JSON.parse(options.body);
-  assert.equal(payload.response_format.type, "json_object");
+  assert.equal(payload.response_format.type, "json_schema");
+  assert.equal(payload.response_format.json_schema.strict, true);
+  assert.equal(payload.response_format.json_schema.schema.additionalProperties, false);
+  assert.ok(payload.response_format.json_schema.schema.required.includes("fields"));
+  assert.equal(payload.response_format.json_schema.schema.properties.fields.additionalProperties, false);
   return new Response(JSON.stringify({
     choices: [{ message: { content: JSON.stringify({
       understood: true,
