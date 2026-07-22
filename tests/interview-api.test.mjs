@@ -50,4 +50,38 @@ try {
   globalThis.fetch = originalFetch;
 }
 
+globalThis.fetch = async () => new Response(JSON.stringify({
+  choices: [{ message: { content: JSON.stringify({
+    understood: true,
+    answerSummary: "昨日の頭痛を記録",
+    acknowledgement: "昨日はつらかったのですね。",
+    answeredFields: ["time", "duration", "severity", "location", "quality", "movement", "nausea", "med", "medEffect", "impact"],
+    fields: {
+      dateOffset: 0, time: "20:00", duration: "2時間", durationMinutes: 120, severity: 3,
+      location: ["右のこめかみ"], symptoms: ["ズキズキする痛み", "動くと悪化", "吐き気あり"],
+      med: "ロキソニン", medTaken: true, medEffect: "少し効いた", impact: "支障あり",
+    },
+  }) } }],
+}), { status: 200, headers: { "content-type": "application/json" } });
+
+try {
+  response = await onRequestPost({
+    request: request({
+      questionKey: "overview",
+      question: "頭痛について自由に話してください",
+      text: "昨日の夜8時から右のこめかみがズキズキして、歩くとひどくなりました。吐き気もあり、ロキソニンで少し楽になりました。",
+    }),
+    env: { OPENAI_API_KEY: "test-key" },
+  });
+  const body = await response.json();
+  assert.equal(body.fields.dateOffset, -1);
+  assert.ok(body.answeredFields.includes("overview"));
+  assert.ok(body.answeredFields.includes("time"));
+  assert.ok(!body.answeredFields.includes("duration"));
+  assert.ok(!body.answeredFields.includes("severity"));
+  assert.ok(!body.answeredFields.includes("impact"));
+} finally {
+  globalThis.fetch = originalFetch;
+}
+
 console.log("interview api tests: ok");

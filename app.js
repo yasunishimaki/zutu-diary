@@ -719,32 +719,40 @@ function applyAiInterpretation(result, draft) {
   const fields = result && typeof result.fields === "object" && result.fields ? result.fields : {};
   const answeredFields = Array.isArray(result?.answeredFields)
     ? result.answeredFields.filter((key) => AI_ANSWER_KEYS.has(key)) : [];
+  const has = (key) => answeredFields.includes(key);
 
-  if (["headache", "noHeadache"].includes(fields.entryType)) draft.entryType = fields.entryType;
-  if ([-2, -1, 0].includes(fields.dateOffset)) draft.date = todayStr(fields.dateOffset);
-  if (shortAiText(fields.time, 40)) draft.time = shortAiText(fields.time, 40);
-  if (shortAiText(fields.duration, 60)) draft.duration = shortAiText(fields.duration, 60);
-  if (Number.isFinite(fields.durationMinutes) && fields.durationMinutes >= 0) draft.durationMinutes = Math.round(fields.durationMinutes);
-  if (typeof fields.ongoing === "boolean") draft.ongoing = fields.ongoing;
-  if ([1, 2, 3].includes(fields.severity)) draft.severity = fields.severity;
-  if (Array.isArray(fields.location)) {
+  if (has("hasHeadache") && ["headache", "noHeadache"].includes(fields.entryType)) draft.entryType = fields.entryType;
+  if (has("time") && [-2, -1, 0].includes(fields.dateOffset)) draft.date = todayStr(fields.dateOffset);
+  if (has("time") && shortAiText(fields.time, 40)) draft.time = shortAiText(fields.time, 40);
+  if (has("duration") && shortAiText(fields.duration, 60)) draft.duration = shortAiText(fields.duration, 60);
+  if (has("duration") && Number.isFinite(fields.durationMinutes) && fields.durationMinutes >= 0) draft.durationMinutes = Math.round(fields.durationMinutes);
+  if (has("duration") && typeof fields.ongoing === "boolean") draft.ongoing = fields.ongoing;
+  if (has("severity") && [1, 2, 3].includes(fields.severity)) draft.severity = fields.severity;
+  if (has("location") && Array.isArray(fields.location)) {
     const locations = fields.location.map((x) => shortAiText(x, 30)).filter(Boolean).slice(0, 5);
     if (locations.length) draft.location = [...new Set(locations)].join("、");
   }
   if (Array.isArray(fields.symptoms)) {
-    for (const symptom of fields.symptoms) if (AI_ALLOWED_SYMPTOMS.has(symptom)) addSymptom(draft, symptom);
+    const fieldForSymptom = (symptom) => {
+      if (["ズキズキする痛み", "締めつける痛み", "重い痛み"].includes(symptom)) return "quality";
+      if (["動くと悪化", "動けなかった"].includes(symptom)) return "movement";
+      if (symptom === "痛む前の見え方の変化") return "aura";
+      if (["吐き気あり", "実際に吐いた"].includes(symptom)) return "nausea";
+      return "photophono";
+    };
+    for (const symptom of fields.symptoms) if (AI_ALLOWED_SYMPTOMS.has(symptom) && has(fieldForSymptom(symptom))) addSymptom(draft, symptom);
   }
-  if (Array.isArray(fields.triggers)) {
+  if (has("triggers") && Array.isArray(fields.triggers)) {
     draft.triggers = [...new Set(fields.triggers.map((x) => shortAiText(x, 30)).filter(Boolean))].slice(0, 8);
   }
-  if (shortAiText(fields.auraDetail, 120)) draft.auraDetail = shortAiText(fields.auraDetail, 120);
-  if (fields.medTaken === false) draft.med = "";
-  if (shortAiText(fields.med, 80)) draft.med = shortAiText(fields.med, 80);
-  if (shortAiText(fields.medTiming, 80)) draft.medTiming = shortAiText(fields.medTiming, 80);
-  if (Number.isFinite(fields.medCount) && fields.medCount >= 0) draft.medCount = Math.round(fields.medCount);
-  if (["よく効いた", "少し効いた", "効かなかった", "まだ不明"].includes(fields.medEffect)) draft.medEffect = fields.medEffect;
-  if (["普段どおり", "支障あり", "寝込んだ"].includes(fields.impact)) draft.impact = fields.impact;
-  if (shortAiText(fields.memo, 500)) draft.memo = cleanSpokenMemo(fields.memo).slice(0, 500);
+  if (has("auraDetail") && shortAiText(fields.auraDetail, 120)) draft.auraDetail = shortAiText(fields.auraDetail, 120);
+  if (has("med") && fields.medTaken === false) draft.med = "";
+  if (has("med") && shortAiText(fields.med, 80)) draft.med = shortAiText(fields.med, 80);
+  if (has("medTiming") && shortAiText(fields.medTiming, 80)) draft.medTiming = shortAiText(fields.medTiming, 80);
+  if (has("medTiming") && Number.isFinite(fields.medCount) && fields.medCount >= 0) draft.medCount = Math.round(fields.medCount);
+  if (has("medEffect") && ["よく効いた", "少し効いた", "効かなかった", "まだ不明"].includes(fields.medEffect)) draft.medEffect = fields.medEffect;
+  if (has("impact") && ["普段どおり", "支障あり", "寝込んだ"].includes(fields.impact)) draft.impact = fields.impact;
+  if (has("memo") && shortAiText(fields.memo, 500)) draft.memo = cleanSpokenMemo(fields.memo).slice(0, 500);
   for (const key of answeredFields) markAnswered(draft, key);
   return answeredFields;
 }

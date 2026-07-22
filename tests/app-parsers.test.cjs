@@ -68,7 +68,7 @@ const aiInterpretation = JSON.parse(evaluate(`(() => {
     fields: {
       dateOffset: -1, time: "夜8時ごろ", severity: 3,
       location: ["右のこめかみ"], symptoms: ["ズキズキする痛み", "吐き気あり", "不正な症状"],
-      triggers: [], medTaken: null, impact: null,
+      triggers: [], medTaken: null, impact: "寝込んだ",
     },
   }, d);
   return JSON.stringify({ d, answered });
@@ -78,6 +78,7 @@ assert.equal(aiInterpretation.d.time, "夜8時ごろ");
 assert.equal(aiInterpretation.d.severity, 3);
 assert.equal(aiInterpretation.d.location, "右のこめかみ");
 assert.deepEqual(aiInterpretation.d.symptoms, ["ズキズキする痛み", "吐き気あり"]);
+assert.equal(aiInterpretation.d.impact, "");
 assert.ok(!aiInterpretation.answered.includes("unknown"));
 
 const narrative = evaluate(`(() => {
