@@ -290,8 +290,13 @@
           <div class="qr-img" id="qr-img"></div>
           <div class="qr-note">
             <b>受付で読み取り</b>
-            期間のまとめと直近の記録がテキストで入っています。
-            カメラをかざすだけで、そのまま読めます。
+            紙の受診メモと同じ内容が入っています。
+            複数に分かれた場合は、番号順に受付で読み取ってください。
+            <div id="qr-nav" class="q-ctrl hidden" style="justify-content:flex-start;margin:8px 0">
+              <button id="qr-prev" class="open-btn" type="button">← 前のQR</button>
+              <b id="qr-part-status" style="margin:0"></b>
+              <button id="qr-next" class="open-btn" type="button">次のQR →</button>
+            </div>
             <span id="qr-info" class="hint"></span>
           </div>
         </div>
@@ -326,6 +331,7 @@
 </div>
 
 <div id="toast" class="toast hidden"></div>
+<script src="summary-shared.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

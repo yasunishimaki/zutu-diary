@@ -2,8 +2,11 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { webcrypto } = require("node:crypto");
+const { gunzipSync } = require("node:zlib");
 
 const source = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
+const summarySource = fs.readFileSync(path.join(__dirname, "..", "summary-shared.js"), "utf8");
 const context = vm.createContext({
   console,
   window: { addEventListener() {} },
@@ -13,9 +16,19 @@ const context = vm.createContext({
   clearTimeout,
   fetch: async () => ({ ok: false }),
   TextEncoder,
+  TextDecoder,
   Blob,
+  Response,
+  CompressionStream,
+  DecompressionStream,
+  crypto: webcrypto,
+  btoa,
+  atob,
   URL,
 });
+context.window.crypto = webcrypto;
+context.window.CompressionStream = CompressionStream;
+vm.runInContext(summarySource, context, { filename: "summary-shared.js" });
 vm.runInContext(source, context, { filename: "app.js" });
 
 function evaluate(expression) {
@@ -138,5 +151,34 @@ evaluate(`state.records = [
 assert.match(elements["summary-body"].innerHTML, /頭痛があったのは1日/);
 assert.match(elements["summary-body"].innerHTML, /実際に吐いた 1回/);
 assert.match(elements["summary-body"].innerHTML, /頭痛なし/);
+const sharedSummaryHtml = elements["summary-body"].innerHTML;
+evaluate(`renderSummaryLegacy()`);
+const normalizeHtml = (html) => html.replace(/\s+/g, " ").replace(/> </g, "><").trim();
+assert.equal(normalizeHtml(elements["summary-body"].innerHTML), normalizeHtml(sharedSummaryHtml));
+
+(async () => {
+const qrParts = JSON.parse(await evaluate(`(async () => JSON.stringify(await buildQrTransfer([
+  ...Array.from({ length: 12 }, (_, index) => normalizeRecord({
+    entryType: "headache", date: todayStr(-index), time: "朝", duration: "2時間",
+    durationMinutes: 120, severity: 2, location: "右のこめかみ",
+    symptoms: ["ズキズキする痛み"], triggers: ["寝不足"], med: "ロキソニン",
+    medEffect: "少し効いた", impact: "支障あり", memo: "先生に相談したいことがあります。".repeat(8),
+    answeredFields: ["time", "duration", "severity", "location", "quality", "triggers", "med", "impact"],
+    skippedFields: [], safetyFlags: [],
+  }))
+], todayStr(-30), todayStr())))()`));
+assert.ok(qrParts.length > 1);
+const qrHeaders = qrParts.map((part) => part.split("|"));
+assert.ok(qrHeaders.every((parts, index) => parts[0] === "ZD2" && parts[1] === "2" && Number(parts[3]) === index + 1));
+const encodedQrPayload = qrHeaders.map((parts) => parts[6]).join("");
+const compressedQrPayload = Buffer.from(encodedQrPayload.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+const decodedQrPayload = JSON.parse((qrHeaders[0][5] === "g" ? gunzipSync(compressedQrPayload) : compressedQrPayload).toString("utf8"));
+assert.equal(decodedQrPayload.type, "zutsu-diary-2-summary");
+assert.equal(decodedQrPayload.records.length, 12);
+assert.ok(!JSON.stringify(decodedQrPayload).includes("紙・画面で"));
 
 console.log("app parser tests: ok");
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

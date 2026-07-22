@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>頭痛ダイアリー 受付リーダー</title>
+<title>頭痛ダイアリー2 受付リーダー</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;500;600;700&family=Noto+Sans+JP:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <style>
-  .rec-shell{max-width:760px;margin:0 auto;padding:0 20px 60px}
+  .rec-shell{max-width:1180px;margin:0 auto;padding:0 20px 60px}
   .scan-stage{position:relative;border:1px solid var(--rule-2);border-radius:2px;
     background:#000;overflow:hidden;margin-top:16px}
   .scan-stage video{display:block;width:100%;max-height:60vh;object-fit:cover}
@@ -40,20 +40,21 @@
   <header class="masthead">
     <div>
       <div class="eyebrow">Reception / 受付用</div>
-      <h2>頭痛ダイアリー <em>QR読み取り</em></h2>
+      <h2>頭痛ダイアリー2 <em>受付用</em></h2>
     </div>
     <div class="meta">HEADACHE DIARY<br>RECEPTION READER</div>
   </header>
 
   <!-- 待機 -->
   <section id="scan-idle" class="section">
-    <p class="lead">患者さんのスマホ画面に表示された「頭痛ダイアリー」のQRコードを読み取ります。</p>
-    <button id="btn-scan" class="cta">📷 カメラで読み取る</button>
+    <p class="lead">患者さんの「頭痛ダイアリー2」に表示されたQRコードを読み取ると、紙の受診メモと同じ内容を表示・印刷できます。</p>
+    <button id="btn-scan" class="cta">📷 QRコードを読み取る</button>
     <p class="scan-status" id="idle-status"></p>
+    <div id="transfer-progress" class="doctor-note hidden"></div>
 
     <div class="paste-box">
       <label class="hint" for="paste-input">カメラが使えないとき ─ 他のQRリーダーで読み取ったテキストをここに貼り付けても表示できます。</label>
-      <textarea id="paste-input" rows="4" placeholder="【頭痛ダイアリー】…"></textarea>
+      <textarea id="paste-input" rows="4" placeholder="ZD2|2|…"></textarea>
       <div class="q-ctrl" style="justify-content:flex-start;margin-top:10px">
         <button id="btn-paste" class="open-btn">表示する</button>
       </div>
@@ -87,7 +88,7 @@
   </section>
 
   <p class="caution no-print" style="margin-top:32px">
-    読み取った内容はこの画面に表示するだけで、<strong>どこにも保存・送信されません</strong>。ページを閉じると消えます。
+    読み取った内容はこの端末内で復元して表示するだけで、<strong>どこにも保存・送信されません</strong>。ページを閉じると消えます。
   </p>
 
   <div class="footer no-print">
@@ -98,7 +99,7 @@
 
 <canvas id="frame-canvas" class="hidden"></canvas>
 
-<script>
+<script type="text/plain" id="legacy-reception-script">
 "use strict";
 const $ = (id) => document.getElementById(id);
 let stream = null;
@@ -181,5 +182,7 @@ $("btn-paste").addEventListener("click", () => {
 });
 window.addEventListener("pagehide", stopScan);
 </script>
+<script src="summary-shared.js"></script>
+<script src="reception-v2.js"></script>
 </body>
 </html>

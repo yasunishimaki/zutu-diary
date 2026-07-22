@@ -1343,7 +1343,7 @@ function renderCalendar() {
 
 let summaryMonths = 1;
 
-function renderSummary() {
+function renderSummaryLegacy() {
   const end = new Date();
   const start = new Date();
   start.setMonth(start.getMonth() - summaryMonths);
@@ -1457,6 +1457,17 @@ function renderSummary() {
   box.innerHTML = html;
 }
 
+function renderSummary() {
+  const { startIso, endIso, recs } = summaryRangeRecords();
+  // 共通レンダーを使い、患者画面と受付画面の内容・印刷結果を一致させる。
+  $("summary-body").innerHTML = window.ZutsuSummary.render({
+    records: [...recs].reverse(),
+    startIso,
+    endIso,
+    summaryMonths,
+  });
+}
+
 /* ---------------- QRコード（受診時に先生に読み取ってもらう） ---------------- */
 
 function summaryRangeRecords() {
@@ -1468,7 +1479,7 @@ function summaryRangeRecords() {
   return { startIso, endIso, recs: sortedRecords().filter((r) => r.date >= startIso && r.date <= endIso) };
 }
 
-function buildQrText(recs, startIso, endIso, limit) {
+function buildQrTextLegacy(recs, startIso, endIso, limit) {
   const headacheRecs = recs.filter(isHeadacheRecord);
   const days = new Set(headacheRecs.map((r) => r.date)).size;
   const recordedDays = new Set(recs.map((r) => r.date)).size;
@@ -1499,7 +1510,7 @@ function buildQrText(recs, startIso, endIso, limit) {
   return { text: lines.join("\n"), shown: list.length };
 }
 
-function renderQr() {
+function renderQrLegacy() {
   const panel = $("qr-panel");
   const img = $("qr-img");
   const info = $("qr-info");
@@ -1520,11 +1531,11 @@ function renderQr() {
   qrcode.stringToBytes = qrcode.stringToBytesFuncs["UTF-8"];
   const encoder = new TextEncoder();
   let limit = Math.min(recs.length, 20);
-  let built = buildQrText(recs, startIso, endIso, limit);
+  let built = buildQrTextLegacy(recs, startIso, endIso, limit);
   // 画面のQRは詰め込みすぎると読み取りにくいので ~500バイトに収める
   while (limit > 1 && encoder.encode(built.text).length > 500) {
     limit--;
-    built = buildQrText(recs, startIso, endIso, limit);
+    built = buildQrTextLegacy(recs, startIso, endIso, limit);
   }
 
   try {
@@ -1536,6 +1547,104 @@ function renderQr() {
   } catch (e) {
     img.innerHTML = "";
     info.textContent = "QRコードを作れませんでした。期間を短くして試してください。";
+  }
+}
+
+const QR_CHUNK_CHARS = 700;
+let qrTransferParts = [];
+let qrPartIndex = 0;
+let qrGeneration = 0;
+
+function qrRecord(record) {
+  const keys = [
+    "entryType", "date", "time", "duration", "durationMinutes", "ongoing", "severity", "location",
+    "symptoms", "triggers", "med", "medTiming", "medCount", "medEffect", "impact", "auraDetail",
+    "memo", "memoSummary", "narrativeRaw", "answeredFields", "skippedFields", "safetyFlags",
+  ];
+  return Object.fromEntries(keys.filter((key) => record[key] !== undefined).map((key) => [key, record[key]]));
+}
+
+function bytesToBase64Url(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function compressQrPayload(text) {
+  const input = new TextEncoder().encode(text);
+  if (!("CompressionStream" in window)) return { codec: "n", bytes: input };
+  const stream = new Blob([input]).stream().pipeThrough(new CompressionStream("gzip"));
+  return { codec: "g", bytes: new Uint8Array(await new Response(stream).arrayBuffer()) };
+}
+
+async function buildQrTransfer(recs, startIso, endIso) {
+  const payload = JSON.stringify({
+    type: "zutsu-diary-2-summary", version: 2, generatedAt: new Date().toISOString(),
+    summaryMonths, startIso, endIso, records: [...recs].reverse().map(qrRecord),
+  });
+  const compressed = await compressQrPayload(payload);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", compressed.bytes));
+  const id = [...digest.slice(0, 6)].map((value) => value.toString(16).padStart(2, "0")).join("");
+  const encoded = bytesToBase64Url(compressed.bytes);
+  const chunks = [];
+  for (let i = 0; i < encoded.length; i += QR_CHUNK_CHARS) chunks.push(encoded.slice(i, i + QR_CHUNK_CHARS));
+  if (chunks.length > 60) throw new Error("too_many_qr_parts");
+  return chunks.map((chunk, index) => `ZD2|2|${id}|${index + 1}|${chunks.length}|${compressed.codec}|${chunk}`);
+}
+
+function showQrTransferPart(index) {
+  if (!qrTransferParts.length) return;
+  qrPartIndex = Math.max(0, Math.min(index, qrTransferParts.length - 1));
+  const img = $("qr-img");
+  const info = $("qr-info");
+  try {
+    const qr = qrcode(0, "L");
+    qr.addData(qrTransferParts[qrPartIndex], "Byte");
+    qr.make();
+    img.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0 });
+    $("qr-part-status").textContent = `${qrPartIndex + 1} / ${qrTransferParts.length}`;
+    $("qr-prev").disabled = qrPartIndex === 0;
+    $("qr-next").disabled = qrPartIndex === qrTransferParts.length - 1;
+    $("qr-nav").classList.toggle("hidden", qrTransferParts.length === 1);
+    info.textContent = qrTransferParts.length === 1
+      ? "紙の受診メモと同じ内容を1個のQRに収録しています。"
+      : `紙の受診メモと同じ内容を${qrTransferParts.length}個に分割しています。受付で1番から順に読み取ってください。`;
+  } catch (_) {
+    img.innerHTML = "";
+    info.textContent = "QRコードを作れませんでした。期間を短くして試してください。";
+  }
+}
+
+async function renderQr() {
+  const generation = ++qrGeneration;
+  const panel = $("qr-panel");
+  const img = $("qr-img");
+  const info = $("qr-info");
+  panel.classList.remove("hidden");
+  $("qr-nav").classList.add("hidden");
+  img.innerHTML = "";
+
+  if (typeof qrcode === "undefined") {
+    info.textContent = "QRコードの部品を読み込めませんでした。インターネット接続を確認して、ページを開き直してください。";
+    return;
+  }
+  const { startIso, endIso, recs } = summaryRangeRecords();
+  if (!recs.length) { info.textContent = "この期間の記録がありません。"; return; }
+  if (!("crypto" in window) || !crypto.subtle) {
+    info.textContent = "この端末では完全な受診メモ用QRを作れません。印刷をご利用ください。";
+    return;
+  }
+
+  info.textContent = "受診メモを圧縮してQRコードを作っています…";
+  qrcode.stringToBytes = qrcode.stringToBytesFuncs["UTF-8"];
+  try {
+    const parts = await buildQrTransfer(recs, startIso, endIso);
+    if (generation !== qrGeneration) return;
+    qrTransferParts = parts;
+    showQrTransferPart(0);
+  } catch (_) {
+    if (generation !== qrGeneration) return;
+    info.textContent = "受診メモ用QRを作れませんでした。印刷をご利用ください。";
   }
 }
 
@@ -1736,6 +1845,8 @@ function init() {
     if (panel.classList.contains("hidden")) renderQr();
     else panel.classList.add("hidden");
   });
+  $("qr-prev").addEventListener("click", () => showQrTransferPart(qrPartIndex - 1));
+  $("qr-next").addEventListener("click", () => showQrTransferPart(qrPartIndex + 1));
 
   // データ管理
   $("btn-export").addEventListener("click", exportJson);

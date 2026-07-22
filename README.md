@@ -7,7 +7,7 @@
 
 1. **音声問診** — 最初に普段の言葉で自由に話すと内容を整理し、不足している大切な項目だけを追加で質問する（頭が痛いときに画面を注視しなくていい）
 2. **月間カレンダー** — 頭痛の日が強さの色で一目でわかる。薬を飲んだ日には💊マーク
-3. **受診メモ** — 頭痛日数・服薬日数・よくあるきっかけを自動集計。**印刷して渡す**ほかに、**QRコードを受付で読み取ってもらう**こともできる（まとめ＋直近の記録をテキストで収録。専用アプリ不要、カメラをかざすだけ）
+3. **受診メモ** — 頭痛日数・服薬日数・よくあるきっかけを自動集計。**印刷して渡す**ほかに、**QRコードを受付で読み取ってもらう**こともできる（紙の受診メモと同じ内容を圧縮し、長い場合は複数のQRに分ける）
 
 ## 使い方
 
@@ -23,7 +23,7 @@
    - マイクが使えない環境でも、**クイックボタン＋文字入力で全質問に回答できる**
    - 「🔊 質問読み上げON/OFF」で質問の読み上げを切り替えられる
 2. **カレンダー** — 月の頭痛日数・服薬日数を集計。頭痛の薬を飲んだ日が月10日以上になると、薬の種類によって目安が異なることを説明し、医師への相談を案内
-3. **受診メモ** — 過去1/3/6ヶ月の記録一覧と集計。「🖨 印刷して持っていく」で印刷用レイアウトに、「📱 QRコードで見せる」で読み取り用QRを表示（内容が多いときは直近分に自動調整）
+3. **受診メモ** — 過去1/3/6ヶ月の記録一覧と集計。「🖨 印刷して持っていく」で印刷用レイアウトに、「📱 QRコードで見せる」で受付用QRを表示。複数表示された場合は、受付用アプリで番号順にすべて読み取る
 
 ## 記録項目（日本頭痛学会式ダイアリーの主要項目に対応）
 
@@ -35,6 +35,8 @@
 |---|---|
 | `index.html` | 【患者用】記録（音声問診/フォーム）・カレンダー・受診メモの3画面 |
 | `reception.html` | 【受付用】QRリーダー。カメラで読み取り→表示→印刷。保存・送信はしない |
+| `reception-v2.js` | 複数QRの順次読み取り・整合性確認・受診メモの復元 |
+| `summary-shared.js` | 患者用と受付用で共用する受診メモ表示。紙と受付画面の内容を揃える |
 | `styles.css` | 和紙×明朝のペーパーデザイン（就活ノート系譜）・印刷用CSS |
 | `app.js` | 問診エンジン・AI出力の検証・ローカル解析・集計・音声入出力（Web Speech API） |
 | `functions/api/interview.js` | 【サーバー】自然な回答をStructured Outputsで記録項目へ変換する問診API |
@@ -48,22 +50,33 @@
 
 - **患者用（main版）**: https://zutsu-diary.pages.dev/
 - **患者用（Codex版）**: https://zutsu-diary-2.pages.dev/ （index.html + styles.css + app.js + functions）
-- **受付用**: https://zutsu-reception.pages.dev/ （reception.html を index.html として + styles.css）
+- **頭痛ダイアリー2 受付用**: https://zutsu-reception-2.pages.dev/ （紙の受診メモと同内容を復元・印刷）
+- **旧受付用**: https://zutsu-reception.pages.dev/
 
 更新手順:
 
 ```
 npx wrangler login   # 初回のみ
-mkdir -p dist-patient dist-reception
-cp index.html styles.css app.js dist-patient/
-cp reception.html dist-reception/index.html && cp styles.css dist-reception/
+mkdir -p dist-patient dist-reception-2
+cp index.html styles.css app.js summary-shared.js dist-patient/
+cp reception.html dist-reception-2/index.html
+cp styles.css summary-shared.js reception-v2.js dist-reception-2/
 npx wrangler pages deploy dist-patient   --project-name=zutsu-diary-2   --branch=Codex
-npx wrangler pages deploy dist-reception --project-name=zutsu-reception --branch=main --commit-dirty=true
+cd dist-reception-2
+npx wrangler pages deploy . --project-name=zutsu-reception-2 --branch=Codex --commit-dirty=true
 ```
 
 `zutsu-diary-2`の本番ブランチは`Codex`。患者用はリポジトリ直下から実行し、`functions`も一緒にアップロードする。
-受付用にはAI APIが不要なので、受付用だけを更新するときは`dist-reception`内からデプロイする。
+受付用にはAI APIが不要なので、受付用だけを更新するときは`dist-reception-2`内からデプロイする（リポジトリ直下の`functions`を含めないため）。
 カメラ（QR読み取り）とマイク（音声問診）は HTTPS が必要 → pages.dev はHTTPSなのでそのまま動く。
+
+## 受付用QRの仕組み
+
+- QRには選択期間の集計と全記録を含め、件数を省略しない
+- 内容をJSON化してgzip圧縮し、1枚に収まらない場合は番号つきの複数QRへ分割する
+- 受付用アプリがすべてのQRを端末内で結合し、チェックサムを確認してから表示する
+- 表示には患者用と同じ`summary-shared.js`を使うため、受付画面・受付での印刷・患者側の紙のメモが同じ内容になる
+- QRの内容をサーバーへ送信せず、ブラウザを閉じると受付画面から消える
 
 ## 設計原則（ココマデから継承）
 
