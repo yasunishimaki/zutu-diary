@@ -77,6 +77,11 @@ try {
   assert.equal(body.fields.dateOffset, -1);
   assert.ok(body.answeredFields.includes("overview"));
   assert.ok(body.answeredFields.includes("time"));
+  assert.ok(body.answeredFields.includes("quality"));
+  assert.ok(body.answeredFields.includes("movement"));
+  assert.ok(body.answeredFields.includes("nausea"));
+  assert.ok(body.answeredFields.includes("med"));
+  assert.ok(body.answeredFields.includes("medEffect"));
   assert.ok(!body.answeredFields.includes("duration"));
   assert.ok(!body.answeredFields.includes("severity"));
   assert.ok(!body.answeredFields.includes("impact"));

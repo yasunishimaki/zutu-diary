@@ -52,11 +52,11 @@ function json(value, status = 200) {
   });
 }
 
-function evidenceFor(key, fields, text) {
+function evidenceFor(key, fields, text, currentQuestionKey) {
   const symptoms = Array.isArray(fields.symptoms) ? fields.symptoms : [];
   if (key === "hasHeadache") return ["headache", "noHeadache"].includes(fields.entryType);
-  if (key === "overview") return true;
-  if (key === "time") return !!fields.time || [-2, -1, 0].includes(fields.dateOffset);
+  if (key === "overview") return currentQuestionKey === "overview";
+  if (key === "time") return !!fields.time || ([-2, -1, 0].includes(fields.dateOffset) && /昨日|一昨日|今朝|朝|昼|夕方|夜|深夜|起きたとき|から|始ま/.test(text));
   if (key === "duration") return (!!fields.duration || Number.isFinite(fields.durationMinutes) || typeof fields.ongoing === "boolean")
     && /(?:\d+|[一二三四五六七八九十半数])\s*(?:分|時間|日)|半日|一日中|ずっと|続い|まだ.{0,8}痛/.test(text);
   if (key === "severity") {
@@ -121,8 +121,8 @@ export async function onRequestPost({ request, env }) {
     else if (/昨日/.test(text)) fields.dateOffset = -1;
     else if (/今日|きょう/.test(text)) fields.dateOffset = 0;
     parsed.fields = fields;
-    const answeredFields = Array.isArray(parsed.answeredFields)
-      ? parsed.answeredFields.filter((key) => QUESTION_KEYS.has(key) && evidenceFor(key, fields, text)) : [];
+    // モデルが一覧へ載せ忘れても、検証済みの値から回答済み項目を再構成する。
+    const answeredFields = [...QUESTION_KEYS].filter((key) => evidenceFor(key, fields, text, questionKey));
     // understood は「現在の質問に答えられた」の意味なので、モデルの内部名の揺れを吸収する。
     if (parsed.understood === true && !answeredFields.includes(questionKey)) answeredFields.push(questionKey);
     parsed.answeredFields = answeredFields;
